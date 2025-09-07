@@ -827,10 +827,15 @@ def ai_generate_script(title: str, price: str, features: list[str], cta: str, te
 
     Requires OPENAI_API_KEY env var. Optional OPENAI_MODEL (default: gpt-4o-mini).
     """
+    # Reset last error holder
+    try:
+        st.session_state["ai_last_error"] = None
+    except Exception:
+        pass
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         try:
-            st.session_state["ai_last_error"] = "OPENAI_API_KEY is not set."
+            st.session_state["ai_last_error"] = "OPENAI_API_KEY가 설정되어 있지 않습니다 (.env 또는 환경변수 확인)."
         except Exception:
             pass
         return None
@@ -865,8 +870,19 @@ def ai_generate_script(title: str, price: str, features: list[str], cta: str, te
         }
         resp = _rq.post(f"{base}/chat/completions", headers=headers, json=data, timeout=45)
         if resp.status_code != 200:
+            # Try to extract detailed error message
+            err_msg = f"OpenAI 오류 {resp.status_code}"
             try:
-                st.session_state["ai_last_error"] = f"HTTP {resp.status_code}: {resp.text[:800]} | model={model} base={base}"
+                j = resp.json()
+                em = (j.get("error") or {}).get("message") or j.get("message")
+                if em:
+                    err_msg += f": {em}"
+            except Exception:
+                txt = (resp.text or "").strip()
+                if txt:
+                    err_msg += f": {txt[:300]}"
+            try:
+                st.session_state["ai_last_error"] = f"{err_msg} (model={model}, base={base})"
             except Exception:
                 pass
             return None
@@ -874,7 +890,7 @@ def ai_generate_script(title: str, price: str, features: list[str], cta: str, te
         return ((js.get("choices") or [{}])[0].get("message") or {}).get("content")
     except Exception as e:
         try:
-            st.session_state["ai_last_error"] = f"{type(e).__name__}: {e} | model={model} base={base}"
+            st.session_state["ai_last_error"] = f"요청 중 예외: {type(e).__name__}: {e}"
         except Exception:
             pass
         return None
@@ -1973,13 +1989,11 @@ def main():
                     except Exception:
                         pass
                 else:
-                    st.warning("AI 호출 실패 또는 OPENAI_API_KEY 미설정. 사이드바 텍스트를 이용해 직접 생성 버튼을 사용하세요.")
-                    # Show detailed reason if available
                     err = st.session_state.get("ai_last_error")
-                    key_present = bool(os.environ.get("OPENAI_API_KEY"))
-                    with st.expander("AI 호출 로그(원인 보기)"):
-                        st.write(f"API Key 존재 여부: {key_present}")
-                        st.code(err or "No additional error info; 키가 없거나 일시적 네트워크 문제일 수 있습니다.")
+                    if err:
+                        st.error(err)
+                    else:
+                        st.warning("AI 호출 실패 또는 OPENAI_API_KEY 미설정. 사이드바 텍스트를 이용해 직접 생성 버튼을 사용하세요.")
 
         with st.expander("대본 템플릿 (편집/저장/불러오기)"):
             tpl_default = "{title} — 핵심만 30초 요약!\n{features_bullets}\n{price_line}\n{cta}"
