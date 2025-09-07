@@ -1,0 +1,24 @@
+# Core
+requests
+beautifulsoup4
+lxml
+Pillow
+moviepy
+
+# Optional TTS (offline-ish; can be flaky on some OS)
+pyttsx3
+
+# Optional headless browser fetch
+playwright
+playwright-stealth
+
+# PDF support
+pymupdf
+
+# UI
+streamlit
+
+# If pyttsx3 doesn't work, you can comment it out and overlay text only.
+
+# Env loader
+python-dotenv

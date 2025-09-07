@@ -1,0 +1,79 @@
+좋아요! 링크만 넣으면 쇼츠가 뚝딱 나오는 파이썬 자동화 패키지를 만들어 두었어요.
+아래 파일을 받아서 로컬에서 실행하시면 됩니다:
+
+Download: product_shorts_maker.zip
+
+뭐가 들어있나요?
+
+shorts_maker.py — 핵심 파이프라인 (링크→정보추출→스크립트→9:16 영상 합성)
+
+requirements.txt — 필요한 파이썬 라이브러리 목록
+
+README.md — 설치/실행 방법 상세 가이드
+
+manual_product.json — 수동 입력 템플릿(크롤링이 막힐 때 사용)
+
+assets/ — 배경음악 등을 넣어둘 폴더(옵션)
+
+빠른 사용법
+
+가상환경 만들고 라이브러리 설치
+
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+
+기본 실행 (상품 링크만으로)
+
+python shorts_maker.py --url "https://예시-상품-링크" --out out.mp4
+python shorts_maker.py --url "https://www.coupang.com/vp/products/7030228140?itemId=17347385572&vendorItemId=84517782544" --out out.mp4
+   python shorts_maker.py \
+      --url "https://www.coupang.com/vp/products/7030228140?itemId=17347385572" \
+      --fetch requests --timeout 45 --retries 2 \
+      --save_html page.html --out out.mp4
+python shorts_maker.py \
+      --url "https://www.coupang.com/vp/products/7030228140?itemId=17347385572" \
+      --fetch playwright --stealth --mobile \
+      --timeout 45 --wait_state networkidle \
+      --install_browsers --save_html page.html \
+      --out out.mp4
+      
+   python shorts_maker.py  --url "https://www.coupang.com/vp/products/7030228140?itemId=17347385572"  --fetch requests --timeout 45 --retries 2   --save_html page.html --out out.mp4
+배경음악 추가 + 길이 28초 지정
+
+python shorts_maker.py --url "https://예시-상품-링크" --music assets/music.mp3 --duration 28 --out out.mp4
+
+
+사이트가 크롤링을 막을 때 (페이지 HTML 저장 후)
+
+python shorts_maker.py --html saved_page.html --out out.mp4
+
+
+수동 입력(제목/가격/특징/이미지URL 직접 기입)
+
+python shorts_maker.py --manual manual_product.json --out out.mp4
+
+기능 포인트
+
+정보 추출: OpenGraph/HTML에서 제목·이미지·설명·가격 탐지(대부분 커머스 대응)
+
+스크립트 자동생성: Hook → 핵심특징 35개 → CTA 구조(1540초)
+
+영상 합성: 1080×1920(9:16) 슬라이드, 텍스트 오버레이, 부드러운 줌 효과
+
+음성(TTS): 기본 pyttsx3 사용(환경에 따라 미동작 시 --no_tts로 텍스트만)
+
+배경음악: mp3/wav 넣으면 자동 믹싱(보이스 아래로 낮게)
+
+자주 묻는 점
+
+FFmpeg 필요: MoviePy가 FFmpeg를 사용합니다. macOS brew install ffmpeg, Ubuntu sudo apt-get install ffmpeg.
+
+TTS가 안 될 때: --no_tts 옵션으로 음성 끄고 자막만 쓰거나, 선호하는 TTS로 synthesize_voice() 부분만 바꿔 쓰세요.
+
+이미지가 없을 때: 자동으로 플레이스홀더 슬라이드를 생성해 이어집니다.
+
+길이 조절: --duration, --min_slide, --max_slide로 슬라이드 시간 자동 배분.
+
+원하시면 쿠팡/스마트스토어 최적 훅 문구 템플릿이나 브랜드 톤에 맞춘 테마(폰트/레이아웃) 프리셋도 바로 추가해드릴게요. 어떤 링크로 먼저 테스트해볼까요? 

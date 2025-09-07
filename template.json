@@ -1,0 +1,30 @@
+{
+  "header": "쿠팡 핫템",
+  "subheader": "번개장작",
+  "footer": "",
+  "cta_label": "제품 보기",
+  "profile_name": "@득탬튜브",
+  "theme_color": [
+    16,
+    153,
+    127
+  ],
+  "bar_height": 90,
+  "card_height": 280,
+  "pill": {
+    "x": 24,
+    "y": 1700,
+    "w": 200,
+    "h": 64
+  },
+  "profile_x": 24,
+  "profile_offset": 18,
+  "font_sizes": {
+    "hdr": 40,
+    "title": 56,
+    "mid": 54,
+    "cta": 32,
+    "prof": 30,
+    "foot": 28
+  }
+}

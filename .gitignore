@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+
+# Environments
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Editors/OS
+.DS_Store
+.idea/
+.vscode/
+
+# App artifacts
+ui_uploads/
+ui_outputs/
+aliexpress_downloads/
+_work/
+_work_pdf/
+
+# Videos and large outputs
+*.mp4
+*.webm
