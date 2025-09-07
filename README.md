@@ -279,6 +279,23 @@ UI에서 지원하는 기능
   - `Remove selected`: 선택 삭제(파일도 삭제).
   - `Clear all`: 전체 삭제(파일 삭제 + 목록 초기화).
 
+### 상세페이지 이미지만 받기(1회 더보기)
+
+- 옵션: `Detail-only images (1x 더보기)` 체크
+- 동작: URL 접속 → 더보기/상세보기 1회 클릭 → 상세설명 컨테이너 내부의 이미지들만 수집/다운로드
+- 텍스트: 상세설명 텍스트를 자동으로
+  - Features 입력칸에 줄 단위로 채워 TTS 대사로 사용 가능
+  - 대본 입력칸(script)에도 원문을 채워 참고/편집 가능
+  - Run 시 Features가 비어 있으면 상세설명에서 추출한 문장을 자동으로 `--feature`로 전달합니다.
+
+### 선택한 이미지로만 실행
+
+- Fetched 영역에서 각 이미지 아래 체크박스로 선택.
+- 상단의 `Use selected only` 체크 시, 실행 시 선택한 이미지들만 사용.
+- `Select all`/`Clear selection`으로 빠르게 토글.
+- 순서 변경: 각 썸네일 아래 `↑/↓/↥/↧` 버튼으로 순서를 조정.
+- 드래그 정렬을 원하면 `streamlit-sortables`와 같은 컴포넌트를 설치해 확장 가능합니다(옵션).
+
 권장: `pip install playwright playwright-stealth && python -m playwright install chromium`
 
 참고: 차단/동적 페이지(예: AliExpress/일부 커머스)는 Deep Fetch + Stealth + Mobile 조합이 안정적입니다.

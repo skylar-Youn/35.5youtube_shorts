@@ -6,6 +6,7 @@ import json
 import tempfile
 import subprocess
 from datetime import datetime
+import hashlib
 
 # Load environment variables from a local .env if present
 try:
@@ -293,6 +294,103 @@ def fetch_images_playwright_deep(url: str, timeout: int = 45, use_stealth: bool 
         ctx.close()
         browser.close()
     return title, urls
+
+
+def fetch_detail_only_playwright(url: str, timeout: int = 45, use_stealth: bool = True, mobile: bool = True,
+                                 wait_state: str = "networkidle"):
+    """Open URL, click a single 'more/description' control, then extract images and text ONLY from
+    the product description/detail container.
+
+    Returns: (title, desc_text, image_urls)
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        try:
+            from playwright_stealth import stealth_sync as pw_stealth
+        except Exception:
+            pw_stealth = None
+    except Exception as e:
+        raise RuntimeError("Playwright not installed") from e
+
+    title: str | None = None
+    desc_text: str | None = None
+    urls: list[str] = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        ua_mobile = "Mozilla/5.0 (Linux; Android 13; SM-G998N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+        ua_desktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        context_args = {
+            "locale": "ko-KR",
+            "ignore_https_errors": True,
+            "user_agent": ua_mobile if mobile else ua_desktop,
+            "extra_http_headers": {
+                "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            },
+        }
+        ctx = browser.new_context(**context_args)
+        page = ctx.new_page()
+        if use_stealth and pw_stealth:
+            pw_stealth(page)
+        page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+        try:
+            page.wait_for_load_state(wait_state, timeout=max(1000, (timeout - 3) * 1000))
+        except Exception:
+            pass
+
+        # Click only once on a likely 'more/description' control
+        for sel in [
+            "button:has-text('더보기')",
+            "text=상세보기",
+            "button:has-text('Show More')",
+            "text=Description",
+            "text=상품 설명",
+            "text=상세",
+            "[data-spm*='desc']",
+            "a[href*='description']",
+        ]:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0:
+                    loc.first.click(timeout=1500)
+                    page.wait_for_timeout(500)
+                    break
+            except Exception:
+                continue
+
+        # Attempt to locate a description container
+        container = None
+        for sel in [
+            "div.detail-desc-decorate",
+            "div.product-description",
+            "div.detail-desc",
+            "div#product-description",
+            "div#product-detail",
+            "div[id*='product-description']",
+            "div[id*='description']",
+            "div[class*='product-detail']",
+        ]:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0:
+                    container = loc.first
+                    break
+            except Exception:
+                continue
+
+        # Evaluate inside container
+        if container and container.count() > 0:
+            data = container.evaluate("(el)=>{\n                const urls = new Set();\n                const pickFromSrcset = (srcset)=>{\n                  if(!srcset) return null;\n                  try{ const parts = srcset.split(',').map(s=>s.trim());\n                        const last = parts[parts.length-1]||parts[0];\n                        return (last.split(' ')||[])[0]||null; }catch(e){return null;}\n                };\n                const imgs = el.querySelectorAll('img');\n                for(const img of imgs){\n                  const rect = img.getBoundingClientRect();\n                  const w = Math.max(img.naturalWidth||0, rect.width||0);\n                  const h = Math.max(img.naturalHeight||0, rect.height||0);\n                  if(w < 120 || h < 120) continue;\n                  let u = img.currentSrc || img.src || img.getAttribute('data-src') || img.getAttribute('data-image') || img.getAttribute('data-original') || pickFromSrcset(img.getAttribute('srcset'));\n                  if(!u) continue;\n                  if(u.startsWith('data:')) continue;\n                  if(/sprite|icon|logo|blank|placeholder/i.test(u)) continue;\n                  if(u.startsWith('//')) u = 'https:' + u;\n                  urls.add(u);\n                }\n                const text = el.innerText || '';\n                return { urls: Array.from(urls), text: text.trim() };\n            }")
+            urls = list(data.get("urls") or [])
+            desc_text = (data.get("text") or "").strip() or None
+        # Title from h1 or document
+        try:
+            title = page.evaluate("() => (document.querySelector('h1')?.textContent || document.title || '').trim()") or None
+        except Exception:
+            title = None
+
+        ctx.close()
+        browser.close()
+    return title, desc_text, urls
 
 
 def parse_images_from_html(html: str, base_url: str, max_items: int = 8):
@@ -999,55 +1097,33 @@ def main():
         feats2 = st.text_area("Features (one per line)", key="features_images")
         script2 = st.text_area("대본 (자동 생성/수정 가능)", key="script_images", height=160)
 
-        # Show/manage fetched images
+        # Show/manage fetched images with selection checkboxes
         fetched = st.session_state.get("images_fetched_paths") or []
         if fetched:
             st.caption(f"Fetched images ready: {len(fetched)} files")
-            try:
-                st.image(fetched[:8], caption=[os.path.basename(p) for p in fetched[:8]], width=120)
-            except Exception:
-                st.image(fetched[:8], width=120)
-            col_fm1, col_fm2, col_fm3 = st.columns([1,2,2])
-            with col_fm1:
-                if st.button("Clear all"):
-                    try:
-                        for pth in fetched:
-                            try:
-                                if os.path.exists(pth):
-                                    os.remove(pth)
-                            except Exception:
-                                pass
-                    finally:
-                        st.session_state.pop("images_fetched_paths", None)
-                        try:
-                            st.rerun()
-                        except Exception:
-                            pass
-            with col_fm2:
-                labels = [f"{i+1}. {os.path.basename(p)}" for i, p in enumerate(fetched)]
-                to_remove = st.multiselect(
-                    "Remove selected",
-                    options=list(range(len(fetched))),
-                    format_func=lambda idx: labels[idx] if 0 <= idx < len(labels) else str(idx),
-                    key="images_fetch_remove_sel",
-                )
-                if st.button("Remove selected") and to_remove:
-                    keep = []
-                    for i, pth in enumerate(fetched):
-                        if i in to_remove:
-                            try:
-                                if os.path.exists(pth):
-                                    os.remove(pth)
-                            except Exception:
-                                pass
-                        else:
-                            keep.append(pth)
-                    st.session_state["images_fetched_paths"] = keep
-                    try:
-                        st.rerun()
-                    except Exception:
-                        pass
-            with col_fm3:
+            # Selection state dict: path -> bool
+            sel_state = st.session_state.get("images_sel_state") or {}
+            # Default new items to True
+            for p in fetched:
+                if p not in sel_state:
+                    sel_state[p] = True
+            st.session_state["images_sel_state"] = sel_state
+
+            # Controls: use selected only, select all/none, clear/add/remove
+            col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4 = st.columns([1,1,1,2])
+            with col_ctrl1:
+                use_selected_only = st.checkbox("Use selected only", value=st.session_state.get("images_use_selected_only", True), key="images_use_selected_only")
+            with col_ctrl2:
+                if st.button("Select all"):
+                    for p in list(sel_state.keys()):
+                        sel_state[p] = True
+                    st.session_state["images_sel_state"] = sel_state
+            with col_ctrl3:
+                if st.button("Clear selection"):
+                    for p in list(sel_state.keys()):
+                        sel_state[p] = False
+                    st.session_state["images_sel_state"] = sel_state
+            with col_ctrl4:
                 add_files = st.file_uploader(
                     "Add more fetched images",
                     type=["jpg", "jpeg", "png"],
@@ -1066,7 +1142,103 @@ def main():
                     if new_paths:
                         cur = st.session_state.get("images_fetched_paths") or []
                         st.session_state["images_fetched_paths"] = cur + new_paths
+                        for p in new_paths:
+                            sel_state[p] = True
+                        st.session_state["images_sel_state"] = sel_state
                         st.success(f"Added {len(new_paths)} images.")
+                        try:
+                            st.rerun()
+                        except Exception:
+                            pass
+
+            # Render grid with checkboxes
+            cols = st.columns(4)
+            for i, p in enumerate(fetched):
+                try:
+                    with cols[i % 4]:
+                        st.image(p, caption=os.path.basename(p), width=180)
+                        h = hashlib.md5(p.encode("utf-8")).hexdigest()[:10]
+                        checked = st.checkbox("select", value=sel_state.get(p, True), key=f"img_sel_{h}")
+                        sel_state[p] = checked
+                        col_ud1, col_ud2, col_ud3, col_ud4 = st.columns([1,1,1,1])
+                        with col_ud1:
+                            if st.button("↑", key=f"img_up_{h}") and i > 0:
+                                # swap up
+                                fetched[i-1], fetched[i] = fetched[i], fetched[i-1]
+                                st.session_state["images_fetched_paths"] = fetched
+                                try:
+                                    st.rerun()
+                                except Exception:
+                                    pass
+                        with col_ud2:
+                            if st.button("↓", key=f"img_down_{h}") and i < len(fetched) - 1:
+                                fetched[i+1], fetched[i] = fetched[i], fetched[i+1]
+                                st.session_state["images_fetched_paths"] = fetched
+                                try:
+                                    st.rerun()
+                                except Exception:
+                                    pass
+                        with col_ud3:
+                            if st.button("↥", key=f"img_top_{h}") and i > 0:
+                                itm = fetched.pop(i)
+                                fetched.insert(0, itm)
+                                st.session_state["images_fetched_paths"] = fetched
+                                try:
+                                    st.rerun()
+                                except Exception:
+                                    pass
+                        with col_ud4:
+                            if st.button("↧", key=f"img_bot_{h}") and i < len(fetched) - 1:
+                                itm = fetched.pop(i)
+                                fetched.append(itm)
+                                st.session_state["images_fetched_paths"] = fetched
+                                try:
+                                    st.rerun()
+                                except Exception:
+                                    pass
+                except Exception:
+                    continue
+            st.session_state["images_sel_state"] = sel_state
+            selected = [p for p in fetched if sel_state.get(p, False)]
+            st.session_state["images_selected_paths"] = selected
+            st.caption(f"Selected: {len(selected)} / {len(fetched)}")
+
+            # Remove selected / Clear all
+            col_rm1, col_rm2 = st.columns([1,1])
+            with col_rm1:
+                if st.button("Remove selected") and selected:
+                    keep = []
+                    for pth in fetched:
+                        if pth in selected:
+                            try:
+                                if os.path.exists(pth):
+                                    os.remove(pth)
+                            except Exception:
+                                pass
+                        else:
+                            keep.append(pth)
+                    st.session_state["images_fetched_paths"] = keep
+                    # purge removed from selection state
+                    for pth in selected:
+                        sel_state.pop(pth, None)
+                    st.session_state["images_sel_state"] = sel_state
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+            with col_rm2:
+                if st.button("Clear all"):
+                    try:
+                        for pth in fetched:
+                            try:
+                                if os.path.exists(pth):
+                                    os.remove(pth)
+                            except Exception:
+                                pass
+                    finally:
+                        st.session_state.pop("images_fetched_paths", None)
+                        st.session_state.pop("images_sel_state", None)
+                        st.session_state.pop("images_selected_paths", None)
                         try:
                             st.rerun()
                         except Exception:
@@ -1090,6 +1262,7 @@ def main():
             use_playwright = st.checkbox("Playwright fallback", value=False, key="images_fetch_pw")
             pw_stealth = st.checkbox("Stealth", value=True, key="images_fetch_pw_stealth")
             deep_fetch = st.checkbox("Deep fetch (scroll/expand)", value=False, key="images_fetch_deep")
+            detail_only = st.checkbox("Detail-only images (1x 더보기)", value=False, key="images_fetch_detail_only")
         with colf3:
             pw_mobile = st.checkbox("Mobile", value=True, key="images_fetch_pw_mobile")
             pw_wait = st.selectbox("Wait state", ["networkidle", "domcontentloaded", "load"], index=0, key="images_fetch_pw_wait")
@@ -1117,8 +1290,26 @@ def main():
                         st.error(f"Fetch failed: {e}")
                 if html:
                     t_title, t_price, t_feats = parse_product_text_from_html(html)
-                    # Download images either via Selenium 56 (AliExpress only) or built-in fetchers
+                    # Download images either via Selenium 56, detail-only, deep fetch, or built-in
                     dpaths = []
+                    desc_text = None
+                    # Detail-only branch (Playwright)
+                    if use_playwright and detail_only:
+                        try:
+                            d_title, d_text, d_urls = fetch_detail_only_playwright(
+                                url_fetch,
+                                timeout=int(fetch_timeout),
+                                use_stealth=pw_stealth,
+                                mobile=pw_mobile,
+                                wait_state=pw_wait,
+                            )
+                            if d_title and not t_title:
+                                t_title = d_title
+                            if d_urls:
+                                dpaths = download_images(d_urls)
+                            desc_text = d_text
+                        except Exception as e:
+                            st.warning(f"Detail-only fetch failed: {e}")
                     if site_sel == "aliexpress" and use_ali56:
                         try:
                             base_dir = os.path.join(UPLOAD_DIR, "aliexpress_downloads")
@@ -1176,7 +1367,7 @@ def main():
                         # Built-in image URL parsing + download
                         img_urls = []
                         try:
-                            if deep_fetch:
+                            if use_playwright and deep_fetch:
                                 try:
                                     deep_title, deep_urls = fetch_images_playwright_deep(
                                         url_fetch,
@@ -1211,7 +1402,7 @@ def main():
                         except Exception:
                             img_urls = []
                         if img_urls:
-                            if not deep_fetch:
+                            if not deep_fetch and not detail_only:
                                 img_urls = img_urls[: int(fetch_count)]
                             dpaths = download_images(img_urls)
                         else:
@@ -1219,6 +1410,16 @@ def main():
                     if dpaths:
                         cur = st.session_state.get("images_fetched_paths") or []
                         st.session_state["images_fetched_paths"] = cur + dpaths
+                    # Prefill features/script from description text if available
+                    if desc_text:
+                        try:
+                            import re as _re
+                            cand = [_s.strip() for _s in _re.split(r"[•\n\.\|\-–·]+", desc_text) if 6 <= len(_s.strip()) <= 90]
+                        except Exception:
+                            cand = []
+                        if cand:
+                            st.session_state["features_images_prefill"] = "\n".join(refine_features(cand))
+                        st.session_state["script_images_prefill"] = desc_text
                     # Optional KRW conversion for display/script
                     if price_convert and t_price:
                         t_price_disp = convert_price_to_krw(t_price, usd=usd_rate, eur=eur_rate, jpy=jpy_rate, cny=cny_rate)
@@ -1264,7 +1465,21 @@ def main():
                 st.error("No HTML fetched. Provide a valid URL or disable Playwright fallback.")
             else:
                 # 2) Parse images
-                if deep_fetch:
+                desc_text = None
+                if use_playwright and st.session_state.get("images_fetch_detail_only"):
+                    try:
+                        parsed_title, desc_text, img_urls = fetch_detail_only_playwright(
+                            url_fetch,
+                            timeout=int(fetch_timeout),
+                            use_stealth=pw_stealth,
+                            mobile=pw_mobile,
+                            wait_state=pw_wait,
+                        )
+                    except Exception as e:
+                        st.warning(f"Detail-only fetch failed, falling back: {e}")
+                        parsed_title, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(fetch_count))
+                    tt_title, tt_price, tt_feats = parse_product_text_from_html(html)
+                elif use_playwright and deep_fetch:
                     try:
                         parsed_title, img_urls = fetch_images_playwright_deep(
                             url_fetch,
@@ -1308,22 +1523,26 @@ def main():
                     st.error("No images found from URL")
                 else:
                     # 3) Download images
-                    if not deep_fetch:
+                    if not deep_fetch and not st.session_state.get("images_fetch_detail_only"):
                         img_urls = img_urls[: int(fetch_count)]
                     dpaths = download_images(img_urls)
                     # Also add to fetched list for later review/editing
                     if dpaths:
                         cur = st.session_state.get("images_fetched_paths") or []
                         st.session_state["images_fetched_paths"] = cur + dpaths
-                    if len(dpaths) < 2:
-                        st.error("Fetched less than 2 images; please try a different URL or increase count.")
+                    # Resolve images to run: respect selection when enabled
+                    use_selected_only = st.session_state.get("images_use_selected_only", True)
+                    selected_paths = st.session_state.get("images_selected_paths") or []
+                    paths_to_run = selected_paths if (use_selected_only and selected_paths) else dpaths
+                    if len(paths_to_run) < 2:
+                        st.error("Need at least 2 images to run. Select more or fetch again.")
                     else:
                         # 4) Build and run shorts_maker2.py
                         cmd = [
                             os.path.basename(os.sys.executable),
                             "shorts_maker2.py",
                             "--images",
-                            *dpaths,
+                            *paths_to_run,
                             "--out", out_path,
                             "--duration", str(duration),
                             "--min_slide", str(min_slide),
@@ -1353,6 +1572,14 @@ def main():
                         elif locals().get("tt_feats"):
                             for line in refine_features(locals()["tt_feats"]):
                                 cmd += ["--feature", line]
+                        elif 'desc_text' in locals() and isinstance(desc_text, str) and desc_text.strip():
+                            try:
+                                import re as _re
+                                desc_feats = [_s.strip() for _s in _re.split(r"[•\n\.\|\-–·]+", desc_text) if 6 <= len(_s.strip()) <= 90]
+                                for line in refine_features(desc_feats):
+                                    cmd += ["--feature", line]
+                            except Exception:
+                                pass
                         if no_tts:
                             cmd.append("--no_tts")
                         cmd += ["--voice_rate", str(voice_rate)]
@@ -1509,12 +1736,17 @@ def main():
                 "--images",
             ]
             img_paths = []
-            for f in imgs or []:
-                p = save_uploaded_file(f, subdir="images")
-                img_paths.append(p)
-            # Include any fetched images from URL parsing
-            if st.session_state.get("images_fetched_paths"):
-                img_paths += list(st.session_state.get("images_fetched_paths"))
+            use_selected_only = st.session_state.get("images_use_selected_only", True)
+            selected_paths = st.session_state.get("images_selected_paths") or []
+            if use_selected_only and selected_paths:
+                img_paths = list(selected_paths)
+            else:
+                for f in imgs or []:
+                    p = save_uploaded_file(f, subdir="images")
+                    img_paths.append(p)
+                # Include any fetched images from URL parsing
+                if st.session_state.get("images_fetched_paths"):
+                    img_paths += list(st.session_state.get("images_fetched_paths"))
             cmd += img_paths
             cmd += ["--out", out_path, "--duration", str(duration), "--min_slide", str(min_slide), "--max_slide", str(max_slide)]
             # Template via JSON if applied

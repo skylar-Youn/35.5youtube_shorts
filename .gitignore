@@ -26,3 +26,7 @@ _work_pdf/
 # Videos and large outputs
 *.mp4
 *.webm
+
+fonts/*
+Archive/*
+assets/*
