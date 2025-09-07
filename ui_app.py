@@ -2006,6 +2006,18 @@ def main():
                 if ans:
                     st.session_state["script_images_prefill"] = ans.strip()
                     st.session_state["script_last_source_prefill"] = "ai"
+                    # Backup AI output to OUTPUT_DIR/AI.txt (append with timestamp)
+                    try:
+                        os.makedirs(OUTPUT_DIR, exist_ok=True)
+                        backup_path = os.path.join(OUTPUT_DIR, "AI.txt")
+                        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        title_for_log = title2 or st.session_state.get("title_images", "")
+                        with open(backup_path, "a", encoding="utf-8") as bf:
+                            bf.write(f"[{ts}] {title_for_log}\n")
+                            bf.write(ans.strip() + "\n\n")
+                        st.caption(f"AI 대본 백업 저장: {backup_path}")
+                    except Exception:
+                        pass
                     st.session_state["images_prefill_pending"] = True
                     try:
                         st.rerun()
