@@ -887,7 +887,14 @@ def ai_generate_script(title: str, price: str, features: list[str], cta: str, te
                 pass
             return None
         js = resp.json()
-        return ((js.get("choices") or [{}])[0].get("message") or {}).get("content")
+        content = ((js.get("choices") or [{}])[0].get("message") or {}).get("content")
+        if not (content or "").strip():
+            try:
+                st.session_state["ai_last_error"] = "OpenAI 응답에 본문이 없습니다 (choices[0].message.content 비어있음)."
+            except Exception:
+                pass
+            return None
+        return content
     except Exception as e:
         try:
             st.session_state["ai_last_error"] = f"요청 중 예외: {type(e).__name__}: {e}"
@@ -1293,6 +1300,9 @@ def main():
                 st.session_state["features_images"] = st.session_state.pop("features_images_prefill")
             if "script_images_prefill" in st.session_state:
                 st.session_state["script_images"] = st.session_state.pop("script_images_prefill")
+            # Apply last-source marker if provided
+            if "script_last_source_prefill" in st.session_state:
+                st.session_state["script_last_source"] = st.session_state.pop("script_last_source_prefill")
             if "script_template_images_prefill" in st.session_state:
                 st.session_state["script_template_images"] = st.session_state.pop("script_template_images_prefill")
             st.session_state["images_prefill_pending"] = False
@@ -1300,6 +1310,16 @@ def main():
         price2 = st.text_input("Price", value="", key="price_images")
         feats2 = st.text_area("Features (one per line)", key="features_images")
         script2 = st.text_area("대본 (자동 생성/수정 가능)", key="script_images", height=160)
+        # Show script status and last error if any
+        last_src = st.session_state.get("script_last_source")
+        if last_src:
+            src_label = {"ai": "AI", "template": "Template", "prefill": "Prefill", "ai_error": "AI 실패"}.get(last_src, str(last_src))
+            st.caption(f"Script source: {src_label}")
+        err = st.session_state.get("ai_last_error")
+        if err:
+            st.error(err)
+        elif not (script2 or "").strip():
+            st.info("아직 대본이 없습니다. '현재 값으로 대본 생성' 또는 'AI에게 요청하기'를 눌러 생성하세요.")
 
         # Show/manage fetched images with selection checkboxes
         fetched = st.session_state.get("images_fetched_paths") or []
@@ -1744,6 +1764,7 @@ def main():
                     scr = render_script_from_template(cur_tpl, t_title or "", t_price_disp or "", refine_features(t_feats or []), st.session_state.get("cta") or "더 알아보기는 링크 클릭!")
                     if scr:
                         st.session_state["script_images_prefill"] = scr
+                        st.session_state["script_last_source_prefill"] = "prefill"
                     st.session_state["images_prefill_pending"] = True
                     st.success(f"Parsed content; downloaded {len(dpaths)} images; updating fields & script…")
                     try:
@@ -1966,6 +1987,7 @@ def main():
                                                   refine_features(feats_list),
                                                   st.session_state.get("cta") or "더 알아보기는 링크 클릭!")
                 st.session_state["script_images_prefill"] = scr
+                st.session_state["script_last_source_prefill"] = "template"
                 st.session_state["images_prefill_pending"] = True
                 try:
                     st.rerun()
@@ -1983,6 +2005,7 @@ def main():
                                          cur_tpl)
                 if ans:
                     st.session_state["script_images_prefill"] = ans.strip()
+                    st.session_state["script_last_source_prefill"] = "ai"
                     st.session_state["images_prefill_pending"] = True
                     try:
                         st.rerun()
@@ -1991,6 +2014,7 @@ def main():
                 else:
                     err = st.session_state.get("ai_last_error")
                     if err:
+                        st.session_state["script_last_source"] = "ai_error"
                         st.error(err)
                     else:
                         st.warning("AI 호출 실패 또는 OPENAI_API_KEY 미설정. 사이드바 텍스트를 이용해 직접 생성 버튼을 사용하세요.")
