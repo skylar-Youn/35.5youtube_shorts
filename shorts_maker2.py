@@ -352,7 +352,7 @@ def extract_features_from_text(text: str, max_features: int = 5) -> List[str]:
     for l in lines:
         if not l:
             continue
-        if len(l) < 6 or len(l) > 90:
+        if len(l) < 6 or len(l) > 120:
             continue
         if re.match(r"^[•\-\d\s\.]+$", l):
             continue

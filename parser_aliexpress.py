@@ -68,7 +68,7 @@ def parse(html: str) -> AliParsed:
         desc = prod.get("description") or ""
         for c in re.split(r"[•\n\.\|]+", desc):
             c = c.strip()
-            if 6 <= len(c) <= 90:
+            if 6 <= len(c) <= 120:
                 features.append(c)
         break  # Use first product block
 
@@ -113,7 +113,7 @@ def parse(html: str) -> AliParsed:
     if len(features) < 3:
         for li in soup.select("li"):
             t = li.get_text(" ", strip=True)
-            if 6 <= len(t) <= 90:
+            if 6 <= len(t) <= 120:
                 features.append(t)
             if len(features) >= 6:
                 break

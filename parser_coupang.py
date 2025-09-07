@@ -56,7 +56,7 @@ def parse(html: str) -> CoupangParsed:
     features = []
     for li in soup.select("li.prod-description-attribute__item, ul.prod-description-attribute li"):
         t = li.get_text(" ", strip=True)
-        if 6 <= len(t) <= 90:
+        if 6 <= len(t) <= 120:
             features.append(t)
             if len(features) >= 6:
                 break
@@ -65,7 +65,7 @@ def parse(html: str) -> CoupangParsed:
         desc = ogd.get("content").strip() if ogd and ogd.get("content") else ""
         for chunk in re.split(r"[•\n\.\|]+", desc):
             c = chunk.strip()
-            if 6 <= len(c) <= 90:
+            if 6 <= len(c) <= 120:
                 features.append(c)
     if not features:
         features = ["핵심 기능 1", "핵심 기능 2", "핵심 기능 3"]
