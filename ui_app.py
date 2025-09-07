@@ -1676,8 +1676,9 @@ def main():
                         st.session_state["title_images_prefill"] = t_title
                     if t_price_disp:
                         st.session_state["price_images_prefill"] = t_price_disp
-                    # If specification lines exist, keep them; otherwise fallback to generic t_feats
-                    if t_feats and not spec_lines:
+                    # If specification lines exist, keep them; otherwise fallback to generic t_feats.
+                    # Do NOT override if overview_lines were extracted.
+                    if t_feats and not spec_lines and not (('overview_lines' in locals()) and overview_lines):
                         st.session_state["features_images_prefill"] = "\n".join(t_feats)
                     # Generate a narration script from template (or fallback)
                     tpl_default = "{title} — 핵심만 30초 요약!\n{features_bullets}\n{price_line}\n{cta}"
