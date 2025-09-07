@@ -278,6 +278,7 @@ UI에서 지원하는 기능
   - `Add more fetched images`: 이미지 추가 업로드(목록에 Append).
   - `Remove selected`: 선택 삭제(파일도 삭제).
   - `Clear all`: 전체 삭제(파일 삭제 + 목록 초기화).
+  - 각 이미지 삭제: 썸네일 카드의 `Delete` 버튼으로 개별 삭제.
 
 ### 상세페이지 이미지만 받기(1회 더보기)
 
@@ -295,6 +296,11 @@ UI에서 지원하는 기능
 - `Select all`/`Clear selection`으로 빠르게 토글.
 - 순서 변경: 각 썸네일 아래 `↑/↓/↥/↧` 버튼으로 순서를 조정.
 - 드래그 정렬을 원하면 `streamlit-sortables`와 같은 컴포넌트를 설치해 확장 가능합니다(옵션).
+
+### 사양(Specifications)만 대사로 사용
+
+- Detail-only 모드에서 가능한 경우 사양 표/리스트를 인식해 “Features (one per line)”에 사양 항목만 자동 채움.
+- 실행 시 Features가 비어 있으면 사양 항목을 `--feature`로 전달(사양 → 설명 순으로 우선).
 
 권장: `pip install playwright playwright-stealth && python -m playwright install chromium`
 

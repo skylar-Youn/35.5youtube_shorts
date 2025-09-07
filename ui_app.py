@@ -44,6 +44,51 @@ OUTPUT_DIR = os.path.join(os.getcwd(), "ui_outputs")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# Persistent UI preferences (saved under OUTPUT_DIR)
+PREFS_PATH = os.path.join(OUTPUT_DIR, "ui_prefs.json")
+
+
+def _load_ui_prefs() -> dict:
+    try:
+        if os.path.exists(PREFS_PATH):
+            with open(PREFS_PATH, "r", encoding="utf-8") as f:
+                js = json.load(f)
+                return js if isinstance(js, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_ui_prefs():
+    keys = [
+        # Fetch preferences
+        "images_fetch_pw",
+        "images_fetch_pw_stealth",
+        "images_fetch_deep",
+        "images_fetch_detail_only",
+        "images_fetch_pw_mobile",
+        "images_fetch_pw_wait",
+        "images_fetch_deep_scrolls",
+        "images_fetch_count",
+        "images_fetch_timeout",
+        # Selection behavior
+        "images_use_selected_only",
+        # Site choice
+        "images_fetch_site",
+    ]
+    data = {}
+    for k in keys:
+        if k in st.session_state:
+            try:
+                data[k] = st.session_state[k]
+            except Exception:
+                continue
+    try:
+        with open(PREFS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
 # Built-in template presets
 PRESET_TEMPLATES = {
     "Clean": {
@@ -391,6 +436,121 @@ def fetch_detail_only_playwright(url: str, timeout: int = 45, use_stealth: bool 
         ctx.close()
         browser.close()
     return title, desc_text, urls
+
+
+def fetch_specifications_playwright(url: str, timeout: int = 45, use_stealth: bool = True, mobile: bool = True,
+                                    wait_state: str = "networkidle") -> list[str]:
+    """Extract specification lines (key: value or bullet items) from product pages.
+
+    Heuristics:
+    - Look for elements with classes containing 'spec', 'product-props', 'specification'.
+    - Extract table rows (th/td or td pairs) and list items.
+    - Limit to reasonable line lengths to avoid noise.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        try:
+            from playwright_stealth import stealth_sync as pw_stealth
+        except Exception:
+            pw_stealth = None
+    except Exception as e:
+        raise RuntimeError("Playwright not installed") from e
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        ua_mobile = "Mozilla/5.0 (Linux; Android 13; SM-G998N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+        ua_desktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        context_args = {
+            "locale": "ko-KR",
+            "ignore_https_errors": True,
+            "user_agent": ua_mobile if mobile else ua_desktop,
+            "extra_http_headers": {
+                "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            },
+        }
+        ctx = browser.new_context(**context_args)
+        page = ctx.new_page()
+        if use_stealth and pw_stealth:
+            pw_stealth(page)
+        page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+        try:
+            page.wait_for_load_state(wait_state, timeout=max(1000, (timeout - 3) * 1000))
+        except Exception:
+            pass
+
+        # Click likely spec/detail toggles once to reveal content
+        for sel in [
+            "text=Specifications", "text=Specification", "text=스펙", "text=제품 스펙", "text=상품 스펙",
+            "button:has-text('더보기')", "text=상세보기",
+        ]:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0:
+                    loc.first.click(timeout=1500)
+                    page.wait_for_timeout(400)
+                    break
+            except Exception:
+                continue
+
+        js = """
+        (function(){
+          const out = [];
+          const MAX = 48;
+          function add(line){
+            if(!line) return;
+            const t = String(line).trim();
+            if(t.length < 3 || t.length > 100) return;
+            if(out.indexOf(t) === -1) out.push(t);
+          }
+          // Tables under spec-like containers
+          const scopes = Array.from(document.querySelectorAll('[class*="spec"], [class*="product-prop"], [class*="product-spec"], [class*="specification"]'));
+          for(const sc of scopes){
+            // Rows
+            const rows = sc.querySelectorAll('tr');
+            for(const r of rows){
+              const ths = r.querySelectorAll('th');
+              const tds = r.querySelectorAll('td');
+              if(ths.length && tds.length){
+                for(let i=0;i<Math.min(ths.length, tds.length, MAX);i++){
+                  const k = ths[i].innerText.trim();
+                  const v = tds[i].innerText.trim();
+                  if(k && v) add(k + ': ' + v);
+                }
+              } else if(tds.length >= 2){
+                for(let i=0;i<tds.length-1 && i<MAX;i+=2){
+                  const k = tds[i].innerText.trim();
+                  const v = tds[i+1].innerText.trim();
+                  if(k && v) add(k + ': ' + v);
+                }
+              } else {
+                const t = r.innerText.trim();
+                add(t);
+              }
+            }
+            // List items
+            const lis = sc.querySelectorAll('li');
+            for(const li of lis){
+              const t = li.innerText.trim();
+              add(t);
+            }
+          }
+          return out.slice(0, 40);
+        })()
+        """
+        try:
+            lines = page.evaluate(js)
+        except Exception:
+            lines = []
+
+        ctx.close()
+        browser.close()
+    # Simple cleanup
+    cleaned = []
+    for ln in lines or []:
+        s = " ".join((ln or "").split())
+        if 3 <= len(s) <= 100 and s not in cleaned:
+            cleaned.append(s)
+    return cleaned[:40]
 
 
 def parse_images_from_html(html: str, base_url: str, max_items: int = 8):
@@ -820,6 +980,16 @@ def main():
             st.session_state[k] = v
         st.session_state.pop("env_prefill_dict", None)
 
+    # Load UI prefs once per session (before creating the widgets that use these keys)
+    if not st.session_state.get("_ui_prefs_loaded"):
+        prefs = _load_ui_prefs()
+        if isinstance(prefs, dict):
+            for k, v in prefs.items():
+                # Do not override if user already set something this session
+                if k not in st.session_state:
+                    st.session_state[k] = v
+        st.session_state["_ui_prefs_loaded"] = True
+
     with st.sidebar:
         st.header("Global Options")
         default_out = f"out_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
@@ -1112,7 +1282,12 @@ def main():
             # Controls: use selected only, select all/none, clear/add/remove
             col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4 = st.columns([1,1,1,2])
             with col_ctrl1:
-                use_selected_only = st.checkbox("Use selected only", value=st.session_state.get("images_use_selected_only", True), key="images_use_selected_only")
+                use_selected_only = st.checkbox(
+                    "Use selected only",
+                    value=st.session_state.get("images_use_selected_only", True),
+                    key="images_use_selected_only",
+                    on_change=_save_ui_prefs,
+                )
             with col_ctrl2:
                 if st.button("Select all"):
                     for p in list(sel_state.keys()):
@@ -1156,7 +1331,8 @@ def main():
             for i, p in enumerate(fetched):
                 try:
                     with cols[i % 4]:
-                        st.image(p, caption=os.path.basename(p), width=180)
+                        cap = f"{i+1}. {os.path.basename(p)}"
+                        st.image(p, caption=cap, width=180)
                         h = hashlib.md5(p.encode("utf-8")).hexdigest()[:10]
                         checked = st.checkbox("select", value=sel_state.get(p, True), key=f"img_sel_{h}")
                         sel_state[p] = checked
@@ -1196,6 +1372,21 @@ def main():
                                     st.rerun()
                                 except Exception:
                                     pass
+                        # Per-image delete
+                        if st.button("Delete", key=f"img_del_{h}"):
+                            try:
+                                if os.path.exists(p):
+                                    os.remove(p)
+                            except Exception:
+                                pass
+                            # remove from fetched and selection
+                            fetched2 = [q for q in fetched if q != p]
+                            st.session_state["images_fetched_paths"] = fetched2
+                            sel_state.pop(p, None)
+                            try:
+                                st.rerun()
+                            except Exception:
+                                pass
                 except Exception:
                     continue
             st.session_state["images_sel_state"] = sel_state
@@ -1251,22 +1442,30 @@ def main():
         st.caption("Optional: fetch images+text from a product URL and run with shorts_maker2.py")
         url_fetch = st.text_input("Fetch URL", key="images_fetch_url")
         auto_site = detect_site(url_fetch) if url_fetch else "auto"
-        site_sel = st.selectbox("Site", ["auto", "coupang", "aliexpress"], index=["auto","coupang","aliexpress"].index(auto_site), key="images_fetch_site")
+        # Respect saved preference if present
+        initial_site = st.session_state.get("images_fetch_site", auto_site)
+        site_sel = st.selectbox(
+            "Site",
+            ["auto", "coupang", "aliexpress"],
+            index=["auto","coupang","aliexpress"].index(initial_site if initial_site in ["auto","coupang","aliexpress"] else auto_site),
+            key="images_fetch_site",
+            on_change=_save_ui_prefs,
+        )
         if url_fetch:
             st.caption(f"Detected: {auto_site}")
         colf1, colf2, colf3 = st.columns(3)
         with colf1:
-            fetch_count = st.slider("Fetch count", 2, 10, 4, 1, key="images_fetch_count")
-            fetch_timeout = st.number_input("Timeout (s)", 5, 120, 30, key="images_fetch_timeout")
+            fetch_count = st.slider("Fetch count", 2, 10, int(st.session_state.get("images_fetch_count", 4)), 1, key="images_fetch_count", on_change=_save_ui_prefs)
+            fetch_timeout = st.number_input("Timeout (s)", 5, 120, int(st.session_state.get("images_fetch_timeout", 30)), key="images_fetch_timeout", on_change=_save_ui_prefs)
         with colf2:
-            use_playwright = st.checkbox("Playwright fallback", value=False, key="images_fetch_pw")
-            pw_stealth = st.checkbox("Stealth", value=True, key="images_fetch_pw_stealth")
-            deep_fetch = st.checkbox("Deep fetch (scroll/expand)", value=False, key="images_fetch_deep")
-            detail_only = st.checkbox("Detail-only images (1x 더보기)", value=False, key="images_fetch_detail_only")
+            use_playwright = st.checkbox("Playwright fallback", value=bool(st.session_state.get("images_fetch_pw", False)), key="images_fetch_pw", on_change=_save_ui_prefs)
+            pw_stealth = st.checkbox("Stealth", value=bool(st.session_state.get("images_fetch_pw_stealth", True)), key="images_fetch_pw_stealth", on_change=_save_ui_prefs)
+            deep_fetch = st.checkbox("Deep fetch (scroll/expand)", value=bool(st.session_state.get("images_fetch_deep", False)), key="images_fetch_deep", on_change=_save_ui_prefs)
+            detail_only = st.checkbox("Detail-only images (1x 더보기)", value=bool(st.session_state.get("images_fetch_detail_only", False)), key="images_fetch_detail_only", on_change=_save_ui_prefs)
         with colf3:
-            pw_mobile = st.checkbox("Mobile", value=True, key="images_fetch_pw_mobile")
-            pw_wait = st.selectbox("Wait state", ["networkidle", "domcontentloaded", "load"], index=0, key="images_fetch_pw_wait")
-            deep_scrolls = st.slider("Scroll passes", 3, 16, 8, 1, key="images_fetch_deep_scrolls")
+            pw_mobile = st.checkbox("Mobile", value=bool(st.session_state.get("images_fetch_pw_mobile", True)), key="images_fetch_pw_mobile", on_change=_save_ui_prefs)
+            pw_wait = st.selectbox("Wait state", ["networkidle", "domcontentloaded", "load"], index=["networkidle","domcontentloaded","load"].index(st.session_state.get("images_fetch_pw_wait", "networkidle")), key="images_fetch_pw_wait", on_change=_save_ui_prefs)
+            deep_scrolls = st.slider("Scroll passes", 3, 16, int(st.session_state.get("images_fetch_deep_scrolls", 8)), 1, key="images_fetch_deep_scrolls", on_change=_save_ui_prefs)
 
         # Optional: Use Selenium-based AliExpress fetcher (56.*) when site is AliExpress
         use_ali56 = False
@@ -1293,6 +1492,7 @@ def main():
                     # Download images either via Selenium 56, detail-only, deep fetch, or built-in
                     dpaths = []
                     desc_text = None
+                    spec_lines: list[str] | None = None
                     # Detail-only branch (Playwright)
                     if use_playwright and detail_only:
                         try:
@@ -1308,6 +1508,17 @@ def main():
                             if d_urls:
                                 dpaths = download_images(d_urls)
                             desc_text = d_text
+                            # Try to extract specification lines
+                            try:
+                                spec_lines = fetch_specifications_playwright(
+                                    url_fetch,
+                                    timeout=int(fetch_timeout),
+                                    use_stealth=pw_stealth,
+                                    mobile=pw_mobile,
+                                    wait_state=pw_wait,
+                                )
+                            except Exception:
+                                spec_lines = None
                         except Exception as e:
                             st.warning(f"Detail-only fetch failed: {e}")
                     if site_sel == "aliexpress" and use_ali56:
@@ -1410,8 +1621,11 @@ def main():
                     if dpaths:
                         cur = st.session_state.get("images_fetched_paths") or []
                         st.session_state["images_fetched_paths"] = cur + dpaths
-                    # Prefill features/script from description text if available
-                    if desc_text:
+                    # Prefill features/script prioritizing specification lines if available
+                    if spec_lines:
+                        st.session_state["features_images_prefill"] = "\n".join(refine_features(spec_lines))
+                        st.session_state["script_images_prefill"] = "\n".join(spec_lines)
+                    elif desc_text:
                         try:
                             import re as _re
                             cand = [_s.strip() for _s in _re.split(r"[•\n\.\|\-–·]+", desc_text) if 6 <= len(_s.strip()) <= 90]
@@ -1571,6 +1785,9 @@ def main():
                                     cmd += ["--feature", line]
                         elif locals().get("tt_feats"):
                             for line in refine_features(locals()["tt_feats"]):
+                                cmd += ["--feature", line]
+                        elif 'spec_lines' in locals() and spec_lines:
+                            for line in refine_features(spec_lines):
                                 cmd += ["--feature", line]
                         elif 'desc_text' in locals() and isinstance(desc_text, str) and desc_text.strip():
                             try:
