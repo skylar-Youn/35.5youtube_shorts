@@ -429,7 +429,7 @@ def fetch_detail_only_playwright(url: str, timeout: int = 45, use_stealth: bool 
             urls = list(data.get("urls") or [])
             desc_text = (data.get("text") or "").strip() or None
             try:
-                data2 = container.evaluate("(el)=>{\n                  // Collect text before first image as overview\n                  function splitLines(s){ if(!s) return []; return s.split(/[•\\n\\.\\|\u30fb\u00b7]+/).map(x=>x.trim()).filter(x=>x.length>=6 && x.length<=120); }\n                  let overviewText = '';\n                  const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT, null);\n                  let node; let reachedImg = false;\n                  while((node = walker.nextNode())){\n                    const tag = (node.tagName||'').toLowerCase();\n                    if(tag === 'img') { reachedImg = true; break; }\n                    if(node.querySelector && node.querySelector('img')) { reachedImg = true; break; }\n                    if(['p','li','div','span','h1','h2','h3','h4','section'].includes(tag)) {\n                      const t = (node.innerText||'').trim();\n                      if(t) overviewText += (overviewText? '\\n' : '') + t;\n                    }\n                  }\n                  return { overview: splitLines(overviewText) };\n                }")
+                data2 = container.evaluate("(el)=>{\n                  // Prefer collecting content under a heading containing '개요' until the first image\n                  function splitLines(s){ if(!s) return []; return s.split(/[•\\n\\.\\|\u30fb\u00b7\-–·]+/).map(x=>x.trim()).filter(x=>x.length>=6 && x.length<=160); }\n                  function hasImg(node){ try { return !!node.querySelector('img'); } catch(e){ return false; } }\n                  function findGaeYoHeading(root){\n                    const heads = root.querySelectorAll('h1,h2,h3,h4,h5,h6,.title--title--O6xcB1q');\n                    for(const h of heads){\n                      const t = (h.textContent||'').trim();\n                      if(t.includes('개요')) return h;\n                    }\n                    return null;\n                  }\n                  let lines = [];\n                  const h = findGaeYoHeading(el);\n                  if(h){\n                    let texts = [];\n                    let sib = h.nextSibling;\n                    while(sib){\n                      if(sib.nodeType === 1){ // ELEMENT_NODE\n                        const tag = sib.tagName ? sib.tagName.toLowerCase() : '' ;\n                        if(['h1','h2','h3','h4','h5','h6'].includes(tag)) break;\n                        if(hasImg(sib)) break;\n                        const t = (sib.innerText||'').trim();\n                        if(t) texts.push(t);\n                      } else if(sib.nodeType === 3){ // TEXT_NODE\n                        const t = (sib.textContent||'').trim();\n                        if(t) texts.push(t);\n                      }\n                      sib = sib.nextSibling;\n                    }\n                    lines = splitLines(texts.join('\n'));\n                  }\n                  if(!lines.length){\n                    // Fallback: collect before first image in the description container\n                    let overviewText = '';\n                    const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT, null);\n                    let node;\n                    while((node = walker.nextNode())){\n                      const tag = (node.tagName||'').toLowerCase();\n                      if(tag === 'img') { break; }\n                      if(node.querySelector && node.querySelector('img')) { break; }\n                      if(['p','li','div','span','h1','h2','h3','h4','section'].includes(tag)) {\n                        const t = (node.innerText||'').trim();\n                        if(t) overviewText += (overviewText? '\\n' : '') + t;\n                      }\n                    }\n                    lines = splitLines(overviewText);\n                  }\n                  return { overview: lines };\n                }")
                 overview_lines = list(data2.get('overview') or [])
             except Exception:
                 overview_lines = []
@@ -442,6 +442,121 @@ def fetch_detail_only_playwright(url: str, timeout: int = 45, use_stealth: bool 
         ctx.close()
         browser.close()
     return title, desc_text, urls, (overview_lines if 'overview_lines' in locals() else [])
+
+
+def fetch_overview_only_playwright(url: str, timeout: int = 45, use_stealth: bool = True, mobile: bool = True,
+                                   wait_state: str = "networkidle") -> list[str]:
+    """Extract only the overview lines under the '개요' title from AliExpress pages.
+
+    Heuristics:
+    - Locate description wrapper (class contains 'description--wrap').
+    - Within it, find content root (#product-description or class contains 'product-description').
+    - Collect text before the first image and split into short lines.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        try:
+            from playwright_stealth import stealth_sync as pw_stealth
+        except Exception:
+            pw_stealth = None
+    except Exception as e:
+        raise RuntimeError("Playwright not installed") from e
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        ua_mobile = "Mozilla/5.0 (Linux; Android 13; SM-G998N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+        ua_desktop = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        context_args = {
+            "locale": "ko-KR",
+            "ignore_https_errors": True,
+            "user_agent": ua_mobile if mobile else ua_desktop,
+            "extra_http_headers": {"Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"},
+        }
+        if mobile:
+            context_args.update({
+                "viewport": {"width": 375, "height": 667},
+                "is_mobile": True,
+                "device_scale_factor": 2,
+            })
+        ctx = p.chromium.new_context(**context_args)
+        page = ctx.new_page()
+        if use_stealth and pw_stealth:
+            pw_stealth(page)
+        page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+        try:
+            page.wait_for_load_state(wait_state, timeout=max(1000, (timeout - 3) * 1000))
+        except Exception:
+            pass
+        for i in range(6):
+            try:
+                page.evaluate("(step) => { window.scrollTo(0, document.body.scrollHeight * step); }", (i + 1) / 6)
+            except Exception:
+                pass
+            page.wait_for_timeout(500)
+        # Try to open description if collapsed
+        for sel in [
+            "button:has-text('더보기')",
+            "text=상세보기",
+            "button:has-text('Show More')",
+            "text=Description",
+            "text=상품 설명",
+            "text=상세",
+        ]:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0:
+                    loc.first.click(timeout=1500)
+                    page.wait_for_timeout(400)
+                    break
+            except Exception:
+                continue
+        # Evaluate overview from description wrapper
+        overview_lines: list[str] = []
+        try:
+            data = page.evaluate("""
+            () => {
+              function splitLines(s){ if(!s) return []; return s.split(/[•\n\.\|\u30fb\u00b7\-–·]+/).map(x=>x.trim()).filter(x=>x.length>=6 && x.length<=160); }
+              function firstTextBeforeImage(root){
+                let overviewText = '';
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null);
+                let node;
+                while((node = walker.nextNode())){
+                  const tag = (node.tagName||'').toLowerCase();
+                  if(tag === 'img') { break; }
+                  if(node.querySelector && node.querySelector('img')) { break; }
+                  if(['p','li','div','span','h1','h2','h3','h4','section'].includes(tag)) {
+                    const t = (node.innerText||'').trim();
+                    if(t) overviewText += (overviewText? '\n' : '') + t;
+                  }
+                }
+                return overviewText;
+              }
+              const wrap = document.querySelector("div[class*='description--wrap']") || document.body;
+              const content = wrap.querySelector('#product-description, [class*="product-description"]') || wrap;
+              let block = firstTextBeforeImage(content);
+              let lines = splitLines(block);
+              if(!lines.length){
+                // Fallback: gather first few text paragraphs/list items ignoring images
+                const parts = [];
+                const walkers = content.querySelectorAll('p, li, div');
+                for(const el of walkers){
+                  if(el.querySelector && el.querySelector('img')) continue;
+                  const t = (el.innerText||'').trim();
+                  if(t && t.length >= 6){ parts.push(t); }
+                  if(parts.length >= 10) break;
+                }
+                lines = splitLines(parts.join('\n'));
+              }
+              return lines;
+            }
+            """)
+            if isinstance(data, list):
+                overview_lines = [str(x) for x in data if x]
+        except Exception:
+            overview_lines = []
+        ctx.close()
+        browser.close()
+        return overview_lines
 
 
 def fetch_specifications_playwright(url: str, timeout: int = 45, use_stealth: bool = True, mobile: bool = True,
@@ -679,6 +794,36 @@ def parse_product_text_from_html(html: str):
 
     # Features
     features = []
+    # Prefer extracting overview under '개요' heading until first image/next heading
+    try:
+        heading = None
+        for tag in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+            ttxt = (tag.get_text(" ", strip=True) or "").strip()
+            if "개요" in ttxt:
+                heading = tag
+                break
+        if heading is not None:
+            buf = []
+            for sib in heading.next_siblings:
+                try:
+                    nm = getattr(sib, "name", None)
+                    if nm in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+                        break
+                    if nm and sib.find("img"):
+                        break
+                    txt = sib.get_text("\n", strip=True) if getattr(sib, "get_text", None) else str(sib).strip()
+                    if txt:
+                        buf.append(txt)
+                except Exception:
+                    continue
+            joined = "\n".join(buf)
+            import re as _re2
+            for chunk in _re2.split(r"[•\n\.\|\-–·]+", joined):
+                c = chunk.strip()
+                if 6 <= len(c) <= 160:
+                    features.append(c)
+    except Exception:
+        pass
     ogd = soup.select_one("meta[property='og:description'], meta[name='og:description'], meta[name='description'], meta[itemprop='description']")
     desc = ogd.get("content").strip() if ogd and ogd.get("content") else ""
     for chunk in _re.split(r"[•\n\.\|]+", desc):
@@ -717,6 +862,14 @@ def refine_features(features):
     out = []
     for f in features or []:
         f = " ".join(f.split())  # normalize spaces
+        try:
+            import re as _re
+            f = _re.sub(r"^[\s\-•\*·–—]+", "", f)
+            # Skip obvious spec label lines like "사양:", "이름:", "소재:" etc.
+            if _re.match(r"^[A-Za-z가-힣]{1,10}\s*[:：]", f):
+                continue
+        except Exception:
+            pass
         if not (6 <= len(f) <= 120):
             continue
         if f not in out:
@@ -1580,6 +1733,18 @@ def main():
                                 dpaths = download_images(d_urls)
                             desc_text = d_text
                             overview_lines = d_overview
+                            # Fallback: if AliExpress and overview empty, try overview-only parser
+                            if site_sel == "aliexpress" and (not overview_lines):
+                                try:
+                                    overview_lines = fetch_overview_only_playwright(
+                                        url_fetch,
+                                        timeout=int(fetch_timeout),
+                                        use_stealth=pw_stealth,
+                                        mobile=pw_mobile,
+                                        wait_state=pw_wait,
+                                    )
+                                except Exception:
+                                    pass
                             # Try to extract specification lines
                             try:
                                 spec_lines = fetch_specifications_playwright(
@@ -1802,6 +1967,18 @@ def main():
                             mobile=pw_mobile,
                             wait_state=pw_wait,
                         )
+                        # Fallback: if AliExpress and no overview, try overview-only
+                        if site_sel == "aliexpress" and (not overview_lines):
+                            try:
+                                overview_lines = fetch_overview_only_playwright(
+                                    url_fetch,
+                                    timeout=int(fetch_timeout),
+                                    use_stealth=pw_stealth,
+                                    mobile=pw_mobile,
+                                    wait_state=pw_wait,
+                                )
+                            except Exception:
+                                pass
                     except Exception as e:
                         st.warning(f"Detail-only fetch failed, falling back: {e}")
                         parsed_title, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(fetch_count))

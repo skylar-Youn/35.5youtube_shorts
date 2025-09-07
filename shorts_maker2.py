@@ -221,6 +221,7 @@ def _make_template_overlay(dynamic_caption: Optional[str], tpl: TemplateConfig, 
 
 def make_image_slide(src_path: str, caption: Optional[str], duration: float, font_path: Optional[str], tpl: Optional[TemplateConfig] = None,
                      highlight: Optional[List[float]] = None) -> ImageClip:
+    # 1) Build base image clip (no motion yet)
     img = Image.open(src_path).convert("RGB")
     img_w, img_h = img.size
     target_ratio = W / H
@@ -238,10 +239,11 @@ def make_image_slide(src_path: str, caption: Optional[str], duration: float, fon
     x = (W - new_w) // 2
     y = (H - new_h) // 2
     canvas.paste(img_resized, (x, y))
+    base = ImageClip(np.array(canvas)).with_duration(duration)
 
-    clip = ImageClip(np.array(canvas)).with_duration(duration)
+    layers = [base]
 
-    # Optional highlight rectangle [x0,y0,x1,y1] in 0..1 coords on final canvas
+    # 2) Optional highlight (moves with video)
     if highlight and len(highlight) == 4:
         try:
             x0 = int(max(0, min(1, highlight[0])) * W)
@@ -253,35 +255,54 @@ def make_image_slide(src_path: str, caption: Optional[str], duration: float, fon
                 hd = ImageDraw.Draw(hi)
                 hd.rectangle([x0, y0, x1, y1], outline=(255, 255, 0, 255), width=8)
                 hd.rectangle([x0, y0, x1, y1], fill=(255, 255, 0, 40))
-                clip = CompositeVideoClip([clip, ImageClip(np.array(hi)).with_duration(duration)])
+                layers.append(ImageClip(np.array(hi)).with_duration(duration))
         except Exception:
             pass
 
-    if tpl:
-        overlay = _make_template_overlay(caption, tpl, font_path)
-        overlay_clip = ImageClip(np.array(overlay)).with_duration(duration)
-        clip = CompositeVideoClip([clip, overlay_clip]).with_duration(duration)
-    else:
-        if caption:
+    # 3) Dynamic caption (moves with video)
+    if caption:
+        if tpl:
+            # Place caption below the fixed card area
+            bar_h = max(40, min(H // 4, int(tpl.bar_height)))
+            card_h = max(120, min(H // 2, int(tpl.card_height)))
+            cap_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            dr = ImageDraw.Draw(cap_img)
+            font_mid = safe_font(font_path, size=max(18, int(tpl.mid_size)))
+            maxw = W - 140
+            lines = _wrap_lines(dr, caption, font_mid, maxw, max_lines=3)
+            y0 = bar_h + card_h + 60
+            for l in lines:
+                bb = dr.textbbox((0, 0), l, font=font_mid)
+                tw, th = bb[2] - bb[0], bb[3] - bb[1]
+                dr.text(((W - tw) // 2, y0), l, font=font_mid, fill=(20, 20, 20, 255))
+                y0 += th + 8
+            layers.append(ImageClip(np.array(cap_img)).with_duration(duration))
+        else:
+            # Non-template: bottom-centered caption block
             txt_img = Image.new("RGBA", (W, 300), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(txt_img)
+            dr = ImageDraw.Draw(txt_img)
             font = safe_font(font_path, size=54)
-            lines = _wrap_lines(draw, caption, font, max_width=W - 120, max_lines=3)
+            lines = _wrap_lines(dr, caption, font, max_width=W - 120, max_lines=3)
             cur_y = 30
             for l in lines[:3]:
-                bbox = draw.textbbox((0, 0), l, font=font)
-                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-                draw.text(((W - tw)//2, cur_y), l, font=font, fill=(245,245,245,255))
+                bb = dr.textbbox((0, 0), l, font=font)
+                tw, th = bb[2] - bb[0], bb[3] - bb[1]
+                dr.text(((W - tw)//2, cur_y), l, font=font, fill=(245,245,245,255))
                 cur_y += th + 12
-            caption_clip = (
-                ImageClip(np.array(txt_img))
-                .with_duration(duration)
-                .with_position(("center", "bottom"))
-            )
-            clip = CompositeVideoClip([clip, caption_clip]).with_duration(duration)
+            layers.append(ImageClip(np.array(txt_img)).with_duration(duration).with_position(("center", "bottom")))
 
-    clip = clip.with_effects([Resize(lambda t: 1.02 + 0.02 * t / max(0.001, duration))])
-    return clip
+    # 4) Compose moving layers and apply Ken Burns zoom
+    moving = CompositeVideoClip(layers).with_duration(duration)
+    moving = moving.with_effects([Resize(lambda t: 1.02 + 0.02 * t / max(0.001, duration))])
+
+    # 5) Composite fixed overlay elements on top (header/subheader/footer/cta/profile)
+    if tpl:
+        overlay = _make_template_overlay(None, tpl, font_path)  # no dynamic caption in fixed overlay
+        overlay_clip = ImageClip(np.array(overlay)).with_duration(duration)
+        final = CompositeVideoClip([moving, overlay_clip]).with_duration(duration)
+        return final
+    else:
+        return moving
 
 
 def synthesize_voice(lines: List[str], out_path: str, rate: int = 185) -> Optional[str]:

@@ -337,3 +337,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 2) Images 탭에서 제목/특징/가격을 입력하고 \"AI에게 요청하기\" 클릭
 3) 스크립트가 생성되면 키 인식/호출이 정상입니다.
 # 35.5youtube_shorts
+
+source /home/sk/ws/SD/paddleOCR2/35.5youtube_shorts/.venv/bin/activate
+source .venv/bin/activate
+python -m streamlit run ui_app.py
