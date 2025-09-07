@@ -1597,6 +1597,37 @@ def main():
                                                 )
                                         except Exception:
                                             st.write(p)
+                                # Try to use product_details.json for overview/description prefill
+                                try:
+                                    details_json = os.path.join(latest_dir, "product_details.json")
+                                    if os.path.exists(details_json):
+                                        with open(details_json, "r", encoding="utf-8") as jf:
+                                            det = json.load(jf)
+                                        overview_txt = (det.get("개요") or det.get("상세설명") or "").strip()
+                                        if overview_txt:
+                                            import re as _re
+                                            parts = [_s.strip() for _s in _re.split(r"[•\n\.|\u2022]+", overview_txt) if 6 <= len(_s.strip()) <= 90]
+                                            feat_from_overview = parts[:5]
+                                            with st.expander("개요 텍스트 미리보기"):
+                                                st.text(overview_txt[:1200] + ("…" if len(overview_txt) > 1200 else ""))
+                                            if feat_from_overview:
+                                                st.session_state["features_images_prefill"] = "\n".join(refine_features(feat_from_overview))
+                                                # Re-generate script with these features
+                                                tpl_default = "{title} — 핵심만 30초 요약!\n{features_bullets}\n{price_line}\n{cta}"
+                                                cur_tpl = st.session_state.get("script_template_images", tpl_default)
+                                                scr = render_script_from_template(
+                                                    cur_tpl,
+                                                    st.session_state.get("title_images", "") or (t_title or ""),
+                                                    st.session_state.get("price_images", "") or (t_price or ""),
+                                                    refine_features(feat_from_overview),
+                                                    st.session_state.get("cta") or "더 알아보기는 링크 클릭!",
+                                                )
+                                                if scr:
+                                                    st.session_state["script_images_prefill"] = scr
+                                                st.session_state["images_prefill_pending"] = True
+                                                st.info("product_details.json의 개요 텍스트로 필드를 업데이트했습니다.")
+                                except Exception:
+                                    pass
                             if not dpaths:
                                 st.warning("Selenium fetcher finished but found no images; falling back to built-in parser.")
                         except Exception as e:

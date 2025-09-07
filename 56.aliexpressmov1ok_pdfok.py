@@ -203,7 +203,67 @@ def save_product_details(driver, folder_path):
                     
         except Exception as e:
             print(f"Description 섹션 PDF 저장 실패: {e}")
-            
+
+        # 개요(Overview/하이라이트) 텍스트 추출 및 저장
+        try:
+            print("개요 섹션 추출 중...")
+            overview_text = ""
+            # '더보기'가 필요할 수 있으니 시도
+            click_show_more_buttons(driver)
+            # 후보 선택자들
+            overview_xpaths = [
+                "//*[contains(text(), '개요')]",
+                "//*[contains(text(), 'Overview')]",
+                "//*[contains(text(), '하이라이트') or contains(text(), 'Highlights')]",
+                "//*[contains(text(), 'Key Features')]",
+            ]
+            overview_css = "[class*='overview'], [id*='overview'], [class*='summary'], [class*='highlights'], [class*='feature']"
+
+            # 1) 텍스트 기반으로 근처 컨테이너 찾기
+            for xp in overview_xpaths:
+                try:
+                    el = driver.find_element(By.XPATH, xp)
+                    if el:
+                        # 상위 블록 컨테이너 잡기
+                        try:
+                            container = el.find_element(By.XPATH, "./ancestor::div[1]")
+                        except Exception:
+                            container = el
+                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", container)
+                        time.sleep(1)
+                        t = container.text.strip()
+                        if t and len(t) > 10:
+                            overview_text = t
+                            break
+                except Exception:
+                    continue
+
+            # 2) CSS 기반 보조 검색
+            if not overview_text:
+                try:
+                    elems = driver.find_elements(By.CSS_SELECTOR, overview_css)
+                    for el in elems:
+                        try:
+                            t = el.text.strip()
+                            if t and len(t) > 10:
+                                overview_text = t
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            if overview_text:
+                # 저장
+                product_info["개요"] = overview_text
+                with open(os.path.join(folder_path, "overview_text.txt"), "w", encoding="utf-8") as f:
+                    f.write(overview_text)
+                print("개요 텍스트 저장 완료")
+            else:
+                print("개요 섹션을 찾지 못했습니다.")
+        except Exception as e:
+            print(f"개요 섹션 처리 실패: {e}")
+
         # 백업으로 스크린샷도 저장
         try:
             print("스크린샷 저장 중...")
