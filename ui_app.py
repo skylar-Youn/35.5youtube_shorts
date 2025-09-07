@@ -683,12 +683,12 @@ def parse_product_text_from_html(html: str):
     desc = ogd.get("content").strip() if ogd and ogd.get("content") else ""
     for chunk in _re.split(r"[•\n\.\|]+", desc):
         c = chunk.strip()
-        if 6 <= len(c) <= 90:
+        if 6 <= len(c) <= 120:
             features.append(c)
     if len(features) < 3:
         for li in soup.select("li"):
             t = li.get_text(" ", strip=True)
-            if 6 <= len(t) <= 90:
+            if 6 <= len(t) <= 120:
                 features.append(t)
             if len(features) >= 6:
                 break
@@ -717,7 +717,7 @@ def refine_features(features):
     out = []
     for f in features or []:
         f = " ".join(f.split())  # normalize spaces
-        if not (6 <= len(f) <= 90):
+        if not (6 <= len(f) <= 120):
             continue
         if f not in out:
             out.append(f)
@@ -1606,7 +1606,7 @@ def main():
                                         overview_txt = (det.get("개요") or det.get("상세설명") or "").strip()
                                         if overview_txt:
                                             import re as _re
-                                            parts = [_s.strip() for _s in _re.split(r"[•\n\.|\u2022]+", overview_txt) if 6 <= len(_s.strip()) <= 90]
+                                            parts = [_s.strip() for _s in _re.split(r"[•\n\.|\u2022]+", overview_txt) if 6 <= len(_s.strip()) <= 120]
                                             feat_from_overview = parts[:5]
                                             with st.expander("개요 텍스트 미리보기"):
                                                 st.text(overview_txt[:1200] + ("…" if len(overview_txt) > 1200 else ""))
@@ -1691,7 +1691,7 @@ def main():
                     elif desc_text:
                         try:
                             import re as _re
-                            cand = [_s.strip() for _s in _re.split(r"[•\n\.\|\-–·]+", desc_text) if 6 <= len(_s.strip()) <= 90]
+                            cand = [_s.strip() for _s in _re.split(r"[•\n\.\|\-–·]+", desc_text) if 6 <= len(_s.strip()) <= 120]
                         except Exception:
                             cand = []
                         if cand:
@@ -1847,9 +1847,6 @@ def main():
                                 line = line.strip()
                                 if line:
                                     cmd += ["--feature", line]
-                        elif locals().get("tt_feats"):
-                            for line in refine_features(locals()["tt_feats"]):
-                                cmd += ["--feature", line]
                         elif 'overview_lines' in locals() and overview_lines:
                             for line in refine_features(overview_lines):
                                 cmd += ["--feature", line]
@@ -1859,11 +1856,14 @@ def main():
                         elif 'desc_text' in locals() and isinstance(desc_text, str) and desc_text.strip():
                             try:
                                 import re as _re
-                                desc_feats = [_s.strip() for _s in _re.split(r"[•\n\.\|\-–·]+", desc_text) if 6 <= len(_s.strip()) <= 90]
+                                desc_feats = [_s.strip() for _s in _re.split(r"[•\n\.\|\-–·]+", desc_text) if 6 <= len(_s.strip()) <= 120]
                                 for line in refine_features(desc_feats):
                                     cmd += ["--feature", line]
                             except Exception:
                                 pass
+                        elif locals().get("tt_feats"):
+                            for line in refine_features(locals()["tt_feats"]):
+                                cmd += ["--feature", line]
                         if no_tts:
                             cmd.append("--no_tts")
                         cmd += ["--voice_rate", str(voice_rate)]
