@@ -1331,7 +1331,7 @@ def main():
             for i, p in enumerate(fetched):
                 try:
                     with cols[i % 4]:
-                        cap = f"{i+1}. {os.path.basename(p)}"
+                        cap = f"image_{i+1}"
                         st.image(p, caption=cap, width=180)
                         h = hashlib.md5(p.encode("utf-8")).hexdigest()[:10]
                         checked = st.checkbox("select", value=sel_state.get(p, True), key=f"img_sel_{h}")
@@ -1644,7 +1644,8 @@ def main():
                         st.session_state["title_images_prefill"] = t_title
                     if t_price_disp:
                         st.session_state["price_images_prefill"] = t_price_disp
-                    if t_feats:
+                    # If specification lines exist, keep them; otherwise fallback to generic t_feats
+                    if t_feats and not spec_lines:
                         st.session_state["features_images_prefill"] = "\n".join(t_feats)
                     # Generate a narration script from template (or fallback)
                     tpl_default = "{title} — 핵심만 30초 요약!\n{features_bullets}\n{price_line}\n{cta}"
