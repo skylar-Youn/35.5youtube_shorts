@@ -71,6 +71,7 @@ def _save_ui_prefs():
         "images_fetch_deep_scrolls",
         "images_fetch_count",
         "images_fetch_timeout",
+        "images_prefill_limit",
         # Selection behavior
         "images_use_selected_only",
         # Site choice
@@ -346,7 +347,7 @@ def fetch_detail_only_playwright(url: str, timeout: int = 45, use_stealth: bool 
     """Open URL, click a single 'more/description' control, then extract images and text ONLY from
     the product description/detail container.
 
-    Returns: (title, desc_text, image_urls)
+    Returns: (title, desc_text, image_urls, overview_lines)
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -427,6 +428,11 @@ def fetch_detail_only_playwright(url: str, timeout: int = 45, use_stealth: bool 
             data = container.evaluate("(el)=>{\n                const urls = new Set();\n                const pickFromSrcset = (srcset)=>{\n                  if(!srcset) return null;\n                  try{ const parts = srcset.split(',').map(s=>s.trim());\n                        const last = parts[parts.length-1]||parts[0];\n                        return (last.split(' ')||[])[0]||null; }catch(e){return null;}\n                };\n                const imgs = el.querySelectorAll('img');\n                for(const img of imgs){\n                  const rect = img.getBoundingClientRect();\n                  const w = Math.max(img.naturalWidth||0, rect.width||0);\n                  const h = Math.max(img.naturalHeight||0, rect.height||0);\n                  if(w < 120 || h < 120) continue;\n                  let u = img.currentSrc || img.src || img.getAttribute('data-src') || img.getAttribute('data-image') || img.getAttribute('data-original') || pickFromSrcset(img.getAttribute('srcset'));\n                  if(!u) continue;\n                  if(u.startsWith('data:')) continue;\n                  if(/sprite|icon|logo|blank|placeholder/i.test(u)) continue;\n                  if(u.startsWith('//')) u = 'https:' + u;\n                  urls.add(u);\n                }\n                const text = el.innerText || '';\n                return { urls: Array.from(urls), text: text.trim() };\n            }")
             urls = list(data.get("urls") or [])
             desc_text = (data.get("text") or "").strip() or None
+            try:
+                data2 = container.evaluate("(el)=>{\n                  // Collect text before first image as overview\n                  function splitLines(s){ if(!s) return []; return s.split(/[•\\n\\.\\|\u30fb\u00b7]+/).map(x=>x.trim()).filter(x=>x.length>=6 && x.length<=120); }\n                  let overviewText = '';\n                  const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT, null);\n                  let node; let reachedImg = false;\n                  while((node = walker.nextNode())){\n                    const tag = (node.tagName||'').toLowerCase();\n                    if(tag === 'img') { reachedImg = true; break; }\n                    if(node.querySelector && node.querySelector('img')) { reachedImg = true; break; }\n                    if(['p','li','div','span','h1','h2','h3','h4','section'].includes(tag)) {\n                      const t = (node.innerText||'').trim();\n                      if(t) overviewText += (overviewText? '\\n' : '') + t;\n                    }\n                  }\n                  return { overview: splitLines(overviewText) };\n                }")
+                overview_lines = list(data2.get('overview') or [])
+            except Exception:
+                overview_lines = []
         # Title from h1 or document
         try:
             title = page.evaluate("() => (document.querySelector('h1')?.textContent || document.title || '').trim()") or None
@@ -435,7 +441,7 @@ def fetch_detail_only_playwright(url: str, timeout: int = 45, use_stealth: bool 
 
         ctx.close()
         browser.close()
-    return title, desc_text, urls
+    return title, desc_text, urls, (overview_lines if 'overview_lines' in locals() else [])
 
 
 def fetch_specifications_playwright(url: str, timeout: int = 45, use_stealth: bool = True, mobile: bool = True,
@@ -1472,7 +1478,19 @@ def main():
         if site_sel == "aliexpress":
             use_ali56 = st.checkbox("Use AliExpress Selenium fetcher (56)", value=True, key="images_fetch_use_56")
 
-        if st.button("Parse URL ➜ Prefill fields"):
+        # Prefill controls: limit + button
+        col_pf1, col_pf2, col_pf3 = st.columns([1,1,2])
+        with col_pf1:
+            prefill_limit = st.number_input(
+                "Prefill images (count)", 1, 20,
+                int(st.session_state.get("images_prefill_limit", int(st.session_state.get("images_fetch_count", 4)))),
+                key="images_prefill_limit",
+                on_change=_save_ui_prefs,
+            )
+        with col_pf2:
+            parse_clicked = st.button("Parse URL ➜ Prefill fields", key="btn_parse_prefill")
+
+        if parse_clicked:
             if not url_fetch:
                 st.warning("Enter a URL first.")
             else:
@@ -1488,6 +1506,7 @@ def main():
                     else:
                         st.error(f"Fetch failed: {e}")
                 if html:
+                    prefill_limit = int(st.session_state.get("images_prefill_limit", int(st.session_state.get("images_fetch_count", 4))))
                     t_title, t_price, t_feats = parse_product_text_from_html(html)
                     # Download images either via Selenium 56, detail-only, deep fetch, or built-in
                     dpaths = []
@@ -1496,7 +1515,7 @@ def main():
                     # Detail-only branch (Playwright)
                     if use_playwright and detail_only:
                         try:
-                            d_title, d_text, d_urls = fetch_detail_only_playwright(
+                            d_title, d_text, d_urls, d_overview = fetch_detail_only_playwright(
                                 url_fetch,
                                 timeout=int(fetch_timeout),
                                 use_stealth=pw_stealth,
@@ -1506,8 +1525,13 @@ def main():
                             if d_title and not t_title:
                                 t_title = d_title
                             if d_urls:
+                                try:
+                                    d_urls = d_urls[: int(prefill_limit)]
+                                except Exception:
+                                    pass
                                 dpaths = download_images(d_urls)
                             desc_text = d_text
+                            overview_lines = d_overview
                             # Try to extract specification lines
                             try:
                                 spec_lines = fetch_specifications_playwright(
@@ -1554,7 +1578,10 @@ def main():
                                             imgs.append(os.path.join(root, fn))
                                         if fn.lower().endswith(".pdf"):
                                             pdfs.append(os.path.join(root, fn))
-                                dpaths = imgs
+                                try:
+                                    dpaths = imgs[: int(prefill_limit)]
+                                except Exception:
+                                    dpaths = imgs
                                 if pdfs:
                                     st.session_state["pdf_fetched_paths"] = pdfs
                                     st.info(f"Saved {len(pdfs)} PDF file(s). Latest dir: {latest_dir}")
@@ -1598,31 +1625,36 @@ def main():
                                     try:
                                         import parser_coupang as pc
                                         cp = pc.parse(html)
-                                        img_urls = cp.images[: int(fetch_count)]
+                                        img_urls = cp.images[: int(prefill_limit)]
                                     except Exception:
-                                        _, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(fetch_count))
+                                        _, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(prefill_limit))
                                 elif site_sel == "aliexpress":
                                     try:
                                         import parser_aliexpress as pa
                                         ap = pa.parse(html)
-                                        img_urls = ap.images[: int(fetch_count)]
+                                        img_urls = ap.images[: int(prefill_limit)]
                                     except Exception:
-                                        _, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(fetch_count))
+                                        _, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(prefill_limit))
                                 else:
-                                    _, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(fetch_count))
+                                    _, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(prefill_limit))
                         except Exception:
                             img_urls = []
                         if img_urls:
-                            if not deep_fetch and not detail_only:
-                                img_urls = img_urls[: int(fetch_count)]
+                            try:
+                                img_urls = img_urls[: int(prefill_limit)]
+                            except Exception:
+                                pass
                             dpaths = download_images(img_urls)
                         else:
                             dpaths = []
                     if dpaths:
                         cur = st.session_state.get("images_fetched_paths") or []
                         st.session_state["images_fetched_paths"] = cur + dpaths
-                    # Prefill features/script prioritizing specification lines if available
-                    if spec_lines:
+                    # Prefill features: prefer overview lines > specification lines > description lines
+                    if 'overview_lines' in locals() and overview_lines:
+                        st.session_state["features_images_prefill"] = "\n".join(refine_features(overview_lines))
+                        st.session_state["script_images_prefill"] = "\n".join(overview_lines)
+                    elif spec_lines:
                         st.session_state["features_images_prefill"] = "\n".join(refine_features(spec_lines))
                         st.session_state["script_images_prefill"] = "\n".join(spec_lines)
                     elif desc_text:
@@ -1683,7 +1715,7 @@ def main():
                 desc_text = None
                 if use_playwright and st.session_state.get("images_fetch_detail_only"):
                     try:
-                        parsed_title, desc_text, img_urls = fetch_detail_only_playwright(
+                        parsed_title, desc_text, img_urls, overview_lines = fetch_detail_only_playwright(
                             url_fetch,
                             timeout=int(fetch_timeout),
                             use_stealth=pw_stealth,
@@ -1693,7 +1725,7 @@ def main():
                     except Exception as e:
                         st.warning(f"Detail-only fetch failed, falling back: {e}")
                         parsed_title, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(fetch_count))
-                    tt_title, tt_price, tt_feats = parse_product_text_from_html(html)
+                        tt_title, tt_price, tt_feats = parse_product_text_from_html(html)
                 elif use_playwright and deep_fetch:
                     try:
                         parsed_title, img_urls = fetch_images_playwright_deep(
@@ -1786,6 +1818,9 @@ def main():
                                     cmd += ["--feature", line]
                         elif locals().get("tt_feats"):
                             for line in refine_features(locals()["tt_feats"]):
+                                cmd += ["--feature", line]
+                        elif 'overview_lines' in locals() and overview_lines:
+                            for line in refine_features(overview_lines):
                                 cmd += ["--feature", line]
                         elif 'spec_lines' in locals() and spec_lines:
                             for line in refine_features(spec_lines):
