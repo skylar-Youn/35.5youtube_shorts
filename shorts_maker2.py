@@ -25,12 +25,18 @@ from moviepy.audio.AudioClip import CompositeAudioClip, concatenate_audioclips
 from moviepy.audio import fx as afx
 from moviepy.video.fx.Resize import Resize
 
-# Optional TTS
+# Optional TTS backends
 try:
     import pyttsx3
-    HAS_TTS = True
+    HAS_PYTTSX3 = True
 except Exception:
-    HAS_TTS = False
+    HAS_PYTTSX3 = False
+
+try:
+    import edge_tts  # type: ignore
+    HAS_EDGE_TTS = True
+except Exception:
+    HAS_EDGE_TTS = False
 
 W, H = 1080, 1920  # 9:16
 
@@ -71,6 +77,13 @@ class TemplateConfig:
     cta_size: int = 32
     prof_size: int = 30
     foot_size: int = 28
+    # Caption position: 'mid' (below card) or 'bottom' (near bottom)
+    caption_pos: str = "mid"
+    caption_area_h: int = 250
+    # Extras for badge/top and bottom caption bar styles
+    badge_title: bool = False
+    bottom_caption_bar: bool = False
+    bottom_caption_bar_h: int = 140
 
 
 def safe_font(font_path: Optional[str] = None, size: int = 60) -> ImageFont.FreeTypeFont:
@@ -127,30 +140,74 @@ def _make_template_overlay(dynamic_caption: Optional[str], tpl: TemplateConfig, 
         th = bbox[3] - bbox[1]
         draw.text((24, (bar_h - th) // 2), hdr, font=font_hdr, fill=(255, 255, 255, 255))
 
-    # White title area (card-like)
+    # Title area: normal card OR badge style
     card_h = max(120, min(H // 2, int(tpl.card_height)))
-    draw.rectangle([0, bar_h, W, bar_h + card_h], fill=(255, 255, 255, 235))
-    # Subheader/title lines
     font_title = safe_font(font_path, size=max(18, int(tpl.title_size)))
     subhdr = tpl.subheader or ""
-    if subhdr:
-        lines = _wrap_lines(draw, subhdr, font_title, max_width=W - 120, max_lines=3)
-        y = bar_h + 26
-        for l in lines:
-            bbox = draw.textbbox((0, 0), l, font=font_title)
-            tw = bbox[2] - bbox[0]
-            draw.text(((W - tw) // 2, y), l, font=font_title, fill=(0, 0, 0, 255))
-            y += (bbox[3] - bbox[1]) + 6
-        # Divider
-        draw.line([60, bar_h + card_h - 10, W - 60, bar_h + card_h - 10], fill=(60, 60, 60, 255), width=2)
+    if getattr(tpl, "badge_title", False):
+        # No full-width card; draw a centered rounded badge around the title text
+        if subhdr:
+            # Measure lines
+            lines = _wrap_lines(draw, subhdr, font_title, max_width=W - 320, max_lines=2)
+            pad_x, pad_y, radius = 32, 18, 28
+            # Compute widest line
+            maxw = 0
+            total_h = 0
+            hs = []
+            for l in lines:
+                bb = draw.textbbox((0, 0), l, font=font_title)
+                w, h = bb[2]-bb[0], bb[3]-bb[1]
+                maxw = max(maxw, w)
+                hs.append(h)
+                total_h += h
+            total_h += (len(lines)-1) * 6
+            bx0 = (W - (maxw + pad_x*2)) // 2
+            by0 = bar_h + 18
+            bx1 = bx0 + maxw + pad_x*2
+            by1 = by0 + total_h + pad_y*2
+            # Badge: white fill + theme border
+            draw.rounded_rectangle([bx0, by0, bx1, by1], radius=radius, fill=(255,255,255,245), outline=(theme[0], theme[1], theme[2], 255), width=8)
+            # Draw lines centered
+            y = by0 + pad_y
+            for i, l in enumerate(lines):
+                bb = draw.textbbox((0, 0), l, font=font_title)
+                tw, th = bb[2]-bb[0], bb[3]-bb[1]
+                draw.text(((W - tw)//2, y), l, font=font_title, fill=(0,0,0,255))
+                y += th + 6
+        # optional decorative divider omitted
+    else:
+        # Classic card under the bar
+        draw.rectangle([0, bar_h, W, bar_h + card_h], fill=(255, 255, 255, 235))
+        if subhdr:
+            lines = _wrap_lines(draw, subhdr, font_title, max_width=W - 120, max_lines=3)
+            y = bar_h + 26
+            for l in lines:
+                bbox = draw.textbbox((0, 0), l, font=font_title)
+                tw = bbox[2] - bbox[0]
+                draw.text(((W - tw) // 2, y), l, font=font_title, fill=(0, 0, 0, 255))
+                y += (bbox[3] - bbox[1]) + 6
+            draw.line([60, bar_h + card_h - 10, W - 60, bar_h + card_h - 10], fill=(60, 60, 60, 255), width=2)
 
-    # Dynamic caption (mid)
+    # Dynamic caption
     if dynamic_caption:
         font_mid = safe_font(font_path, size=max(18, int(tpl.mid_size)))
         maxw = W - 140
         lines = _wrap_lines(draw, dynamic_caption, font_mid, maxw, max_lines=3)
-        # Place text below the card, approx below 1/3 of screen
-        y0 = bar_h + card_h + 60
+        # Position: bottom or mid
+        if getattr(tpl, "caption_pos", "mid") == "bottom":
+            # total text height
+            total_h = 0
+            hs = []
+            for l in lines:
+                bb = draw.textbbox((0, 0), l, font=font_mid)
+                h = bb[3] - bb[1]
+                hs.append(h)
+                total_h += h
+            total_h += max(0, (len(lines) - 1)) * 8
+            y0 = H - 60 - total_h
+        else:
+            # Place text below the card, approx below 1/3 of screen
+            y0 = bar_h + card_h + 60
         for l in lines:
             bbox = draw.textbbox((0, 0), l, font=font_mid)
             tw = bbox[2] - bbox[0]
@@ -163,6 +220,14 @@ def _make_template_overlay(dynamic_caption: Optional[str], tpl: TemplateConfig, 
     for i in range(grad_h):
         a = int(180 * (i / grad_h))
         draw.line([(0, H - grad_h + i), (W, H - grad_h + i)], fill=(0, 0, 0, a))
+
+    # Optional bottom caption bar (for bold white strip above bottom)
+    if getattr(tpl, "bottom_caption_bar", False):
+        area_h = max(100, int(getattr(tpl, "caption_area_h", 250)))
+        bar_hh = min(area_h - 20, int(getattr(tpl, "bottom_caption_bar_h", 140)))
+        y0 = H - area_h - 20
+        y1 = y0 + bar_hh
+        draw.rounded_rectangle([24, y0, W-24, y1], radius=20, fill=(255,255,255,245))
 
     # CTA pill (bottom-left)
     pill_h = max(40, int(tpl.pill_h))
@@ -270,7 +335,26 @@ def make_image_slide(src_path: str, caption: Optional[str], duration: float, fon
             font_mid = safe_font(font_path, size=max(18, int(tpl.mid_size)))
             maxw = W - 140
             lines = _wrap_lines(dr, caption, font_mid, maxw, max_lines=3)
-            y0 = bar_h + card_h + 60
+            # Compute vertical position based on caption_pos
+            if getattr(tpl, "caption_pos", "mid") == "bottom":
+                # total text height
+                total_h = 0
+                hs = []
+                for l in lines:
+                    bb = dr.textbbox((0, 0), l, font=font_mid)
+                    h = bb[3] - bb[1]
+                    hs.append(h)
+                    total_h += h
+                total_h += max(0, (len(lines) - 1)) * 8
+                area_h = max(120, int(getattr(tpl, "caption_area_h", 250)))
+                area_top = H - area_h
+                # place at top of the area with small margin
+                y0 = area_top + 10
+                # if text would overflow, anchor to bottom inside area
+                if y0 + total_h > H - 10:
+                    y0 = max(area_top + 10, H - 10 - total_h)
+            else:
+                y0 = bar_h + card_h + 60
             for l in lines:
                 bb = dr.textbbox((0, 0), l, font=font_mid)
                 tw, th = bb[2] - bb[0], bb[3] - bb[1]
@@ -305,23 +389,73 @@ def make_image_slide(src_path: str, caption: Optional[str], duration: float, fon
         return moving
 
 
-def synthesize_voice(lines: List[str], out_path: str, rate: int = 185) -> Optional[str]:
-    if not HAS_TTS:
-        return None
-    try:
-        engine = pyttsx3.init()
-        engine.setProperty("rate", rate)
-        for v in engine.getProperty("voices"):
-            name = (getattr(v, "name", "") or "").lower()
-            langs = (getattr(v, "languages", []) or [])
-            if "ko" in str(langs).lower() or "korean" in name:
-                engine.setProperty("voice", v.id)
-                break
-        engine.save_to_file(" ".join(lines), out_path)
-        engine.runAndWait()
-        return out_path
-    except Exception:
-        return None
+def synthesize_voice(
+    lines: List[str],
+    out_path: str,
+    rate: int = 185,
+    backend: Optional[str] = None,
+    edge_voice: str = "ko-KR-SunHiNeural",
+    edge_rate_pct: int = 0,
+) -> Optional[str]:
+    """Synthesize TTS audio to out_path.
+
+    - backend: "pyttsx3" or "edge-tts". If None, choose available with preference order: edge-tts, pyttsx3.
+    - rate: words per minute (pyttsx3 only)
+    - edge_voice: e.g., "ko-KR-SunHiNeural"
+    - edge_rate_pct: integer percent adjustment, e.g., -20..+50
+    """
+    text = " ".join(lines or [])
+    choice = (backend or "").strip().lower() if backend else None
+
+    def _pyttsx3_say() -> Optional[str]:
+        if not HAS_PYTTSX3:
+            return None
+        try:
+            engine = pyttsx3.init()
+            engine.setProperty("rate", rate)
+            for v in engine.getProperty("voices"):
+                name = (getattr(v, "name", "") or "").lower()
+                langs = (getattr(v, "languages", []) or [])
+                if "ko" in str(langs).lower() or "korean" in name:
+                    engine.setProperty("voice", v.id)
+                    break
+            engine.save_to_file(text, out_path)
+            engine.runAndWait()
+            return out_path
+        except Exception:
+            return None
+
+    async def _edge_tts_save_async(tts_text: str, voice: str, path: str, pct: int) -> None:
+        rate_str = f"{pct:+d}%" if isinstance(pct, int) else "+0%"
+        comm = edge_tts.Communicate(tts_text, voice=voice, rate=rate_str)
+        await comm.save(path)
+
+    def _edge_tts_say() -> Optional[str]:
+        if not HAS_EDGE_TTS:
+            return None
+        try:
+            import asyncio
+            asyncio.run(_edge_tts_save_async(text, edge_voice, out_path, int(edge_rate_pct)))
+            return out_path
+        except RuntimeError:
+            # Fallback for environments with an existing event loop
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                loop.run_until_complete(_edge_tts_save_async(text, edge_voice, out_path, int(edge_rate_pct)))
+                return out_path
+            except Exception:
+                return None
+        except Exception:
+            return None
+
+    # Choose backend
+    if choice == "edge-tts":
+        return _edge_tts_say() or _pyttsx3_say()
+    if choice == "pyttsx3":
+        return _pyttsx3_say() or _edge_tts_say()
+    # Auto: prefer edge-tts for quality when available
+    return _edge_tts_say() or _pyttsx3_say()
 
 
 def build_timeline(images: List[str], script: Dict[str, List[str]], duration: int, font_path: Optional[str],
@@ -531,8 +665,15 @@ def main():
     ap.add_argument("--max_pages", type=int, default=6, help="사용할 최대 페이지 수")
     ap.add_argument("--zoom", type=float, default=2.0, help="PDF 렌더링 확대 배율")
     ap.add_argument("--music", type=str, help="배경음악 mp3/wav (선택)")
+    # TTS options
     ap.add_argument("--no_tts", action="store_true", help="TTS 내레이션 비활성화")
-    ap.add_argument("--voice_rate", type=int, default=185)
+    ap.add_argument("--voice_rate", type=int, default=185, help="pyttsx3 말하기 속도(wpm)")
+    ap.add_argument("--tts_backend", choices=["pyttsx3", "edge-tts"], default="pyttsx3",
+                    help="TTS 엔진 선택: 오프라인(py) 또는 Edge-TTS")
+    ap.add_argument("--edge_voice", type=str, default="ko-KR-SunHiNeural",
+                    help="Edge-TTS 음성 이름 (예: ko-KR-SunHiNeural)")
+    ap.add_argument("--edge_rate_pct", type=int, default=0,
+                    help="Edge-TTS 말하기 속도 조정(%)")
     ap.add_argument("--font_path", type=str, default=None)
     ap.add_argument("--min_slide", type=float, default=2.0)
     ap.add_argument("--max_slide", type=float, default=5.0)
@@ -555,8 +696,9 @@ def main():
     ap.add_argument("--tpl_pill", type=str, help="CTA pill geom 'x,y,w,h'")
     ap.add_argument("--tpl_profile_xy", type=str, help="프로필 아바타 좌표 'x,y' (px)")
     ap.add_argument("--tpl_profile_x", type=int, help="프로필 X 좌표(px)")
-    ap.add_argument("--tpl_profile_offset", type=int, help="프로필 수직 오프셋(px, pill 아래에서)"
-                    )
+    ap.add_argument("--tpl_profile_offset", type=int, help="프로필 수직 오프셋(px, pill 아래에서)")
+    ap.add_argument("--tpl_caption_pos", type=str, choices=["mid", "bottom"], help="대본 캡션 위치")
+    ap.add_argument("--tpl_caption_area", type=int, help="하단 캡션 영역 높이(px)")
     ap.add_argument("--tpl_sizes", type=str, help="폰트 크기들 'hdr,title,mid,cta,prof,foot'")
     # Script (text) save/load
     ap.add_argument("--script_json", type=str, help="제목/가격/특징/CTA를 담은 JSON 파일 경로")
@@ -706,6 +848,8 @@ def main():
             cta_size=int((list(map(int, (args.tpl_sizes or "").split(",")))[3] if args.tpl_sizes else sizes.get("cta", 32))),
             prof_size=int((list(map(int, (args.tpl_sizes or "").split(",")))[4] if args.tpl_sizes else sizes.get("prof", 30))),
             foot_size=int((list(map(int, (args.tpl_sizes or "").split(",")))[5] if args.tpl_sizes else sizes.get("foot", 28))),
+            caption_pos=(args.tpl_caption_pos if args.tpl_caption_pos is not None else (adv.get("caption_pos") or "mid")),
+            caption_area_h=int(args.tpl_caption_area if args.tpl_caption_area is not None else (adv.get("caption_area_h") if adv.get("caption_area_h") is not None else 250)),
         )
     # Slides spec JSON support
     slides_spec = None
@@ -727,10 +871,15 @@ def main():
     if not args.no_tts:
         work_dir = "_work_pdf"
         os.makedirs(work_dir, exist_ok=True)
+        # Choose extension based on backend
+        tts_ext = ".mp3" if (getattr(args, "tts_backend", "") == "edge-tts") else ".wav"
         narration_path = synthesize_voice(
             script["hook"] + script["core"] + script["closing"],
-            os.path.join(work_dir, "narration.wav"),
+            os.path.join(work_dir, f"narration{tts_ext}"),
             rate=args.voice_rate,
+            backend=getattr(args, "tts_backend", None),
+            edge_voice=getattr(args, "edge_voice", "ko-KR-SunHiNeural"),
+            edge_rate_pct=int(getattr(args, "edge_rate_pct", 0)),
         )
 
     final = video
@@ -763,6 +912,8 @@ def main():
             "cta_label": (cta_label or (info.cta or "제품 보기")),
             "profile_name": profile_name or "@channel",
             "theme_color": list(theme_tuple),
+            "caption_pos": (args.tpl_caption_pos if args.tpl_caption_pos is not None else adv.get("caption_pos") or "mid"),
+            "caption_area_h": int(args.tpl_caption_area if args.tpl_caption_area is not None else (adv.get("caption_area_h") if adv.get("caption_area_h") is not None else 250)),
         }
         try:
             with open(args.save_template, "w", encoding="utf-8") as f:

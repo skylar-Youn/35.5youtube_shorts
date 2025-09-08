@@ -5,8 +5,11 @@ lxml
 Pillow
 moviepy
 
-# Optional TTS (offline-ish; can be flaky on some OS)
+# Optional TTS
+# - pyttsx3: offline, simpler, lower quality on Linux
+# - edge-tts: online, high-quality Neural voices (e.g., ko-KR-SunHiNeural)
 pyttsx3
+edge-tts
 
 # Optional headless browser fetch
 playwright

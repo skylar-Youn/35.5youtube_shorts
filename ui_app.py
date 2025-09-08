@@ -87,6 +87,19 @@ def _save_ui_prefs():
         "images_use_selected_only",
         # Site choice
         "images_fetch_site",
+        # Template small prefs to persist across reloads
+        "tpl_caption_pos",
+        "tpl_caption_area",
+        # Apply template toggle
+        "apply_tpl",
+        # TTS prefs
+        "no_tts",
+        "tts_engine",
+        "voice_rate",
+        "edge_voice",
+        "edge_rate_pct",
+        # Last selected preset (auto-apply)
+        "last_preset_name",
     ]
     data = {}
     for k in keys:
@@ -144,6 +157,85 @@ PRESET_TEMPLATES = {
         "profile_x": 28,
         "profile_offset": 24,
         "font_sizes": {"hdr": 36, "title": 54, "mid": 52, "cta": 30, "prof": 28, "foot": 26},
+    },
+    "BottomCaption": {
+        "header": "하단 캡션",
+        "subheader": "핵심만, 빠르게",
+        "footer": "",
+        "cta_label": "제품 보기",
+        "profile_name": "@channel",
+        "theme_color": [16, 153, 127],
+        "bar_height": 90,
+        "card_height": 260,
+        "pill": {"x": 24, "y": 1700, "w": 200, "h": 64},
+        "profile_x": 24,
+        "profile_offset": 18,
+        "font_sizes": {"hdr": 40, "title": 56, "mid": 54, "cta": 32, "prof": 30, "foot": 28},
+        "caption_pos": "bottom",
+    },
+    "BottomDark": {
+        "header": "INSIGHT",
+        "subheader": "오늘의 한 줄",
+        "footer": "",
+        "cta_label": "구매하기",
+        "profile_name": "@insight",
+        "theme_color": [20, 20, 20],
+        "bar_height": 80,
+        "card_height": 200,
+        "pill": {"x": 28, "y": 1720, "w": 220, "h": 64},
+        "profile_x": 28,
+        "profile_offset": 22,
+        "font_sizes": {"hdr": 36, "title": 52, "mid": 48, "cta": 30, "prof": 28, "foot": 24},
+        "caption_pos": "bottom",
+    },
+    "BottomVivid": {
+        "header": "핫딜",
+        "subheader": "지금 확인",
+        "footer": "",
+        "cta_label": "바로가기",
+        "profile_name": "@deal",
+        "theme_color": [232, 57, 43],  # vivid red
+        "bar_height": 88,
+        "card_height": 240,
+        "pill": {"x": 24, "y": 1680, "w": 240, "h": 70},
+        "profile_x": 28,
+        "profile_offset": 18,
+        "font_sizes": {"hdr": 44, "title": 58, "mid": 52, "cta": 34, "prof": 30, "foot": 26},
+        "caption_pos": "bottom",
+    },
+    "BottomCompact": {
+        "header": "핵심요약",
+        "subheader": "짧고 굵게",
+        "footer": "",
+        "cta_label": "자세히",
+        "profile_name": "@shorts",
+        "theme_color": [32, 120, 180],
+        "bar_height": 64,
+        "card_height": 180,
+        "pill": {"x": 24, "y": 1740, "w": 200, "h": 60},
+        "profile_x": 24,
+        "profile_offset": 16,
+        "font_sizes": {"hdr": 34, "title": 48, "mid": 46, "cta": 28, "prof": 26, "foot": 22},
+        "caption_pos": "bottom",
+    },
+    "ReelBadge": {
+        "header": "",
+        "subheader": "여기에 큰 제목",
+        "footer": "",
+        "cta_label": "제품 보기",
+        "profile_name": "@shorts",
+        "theme_color": [0, 120, 80],
+        "bar_height": 72,
+        "card_height": 180,
+        "pill": {"x": 24, "y": 1760, "w": 200, "h": 64},
+        "profile_x": 24,
+        "profile_offset": 16,
+        "font_sizes": {"hdr": 36, "title": 56, "mid": 50, "cta": 30, "prof": 28, "foot": 24},
+        "caption_pos": "bottom",
+        "caption_area_h": 250,
+        "badge_title": True,
+        "bottom_caption_bar": True,
+        "bottom_caption_bar_h": 140,
     },
 }
 
@@ -1272,6 +1364,8 @@ def build_template_json_if_applied(apply_tpl: bool) -> str | None:
             int(st.session_state.get("tpl_color", "#10997F")[3:5], 16),
             int(st.session_state.get("tpl_color", "#10997F")[5:7], 16),
         ],
+        "caption_pos": st.session_state.get("tpl_caption_pos", "mid"),
+        "caption_area_h": st.session_state.get("tpl_caption_area", 250),
         "bar_height": st.session_state.get("tpl_bar", 90),
         "card_height": st.session_state.get("tpl_card", 280),
         "pill": {
@@ -1343,6 +1437,11 @@ def make_template_preview_image(caption: str | None = None, bg_path: str | None 
         cta_size=int(st.session_state.get("tpl_size_cta", 32)),
         prof_size=int(st.session_state.get("tpl_size_prof", 30)),
         foot_size=int(st.session_state.get("tpl_size_foot", 28)),
+        caption_pos=st.session_state.get("tpl_caption_pos", "mid"),
+        caption_area_h=int(st.session_state.get("tpl_caption_area", 250)),
+        badge_title=bool(st.session_state.get("tpl_badge_title", False)),
+        bottom_caption_bar=bool(st.session_state.get("tpl_bottom_caption_bar", False)),
+        bottom_caption_bar_h=int(st.session_state.get("tpl_bottom_caption_h", 140)),
     )
 
     # Background
@@ -1360,9 +1459,46 @@ def make_template_preview_image(caption: str | None = None, bg_path: str | None 
             a = int(40 + 40 * (i / max(1, VID_H)))
             dr.line([(0, i), (VID_W, i)], fill=(a, a, a))
 
-    overlay = _make_template_overlay(caption or "", tpl, font_path=st.session_state.get("font_path") or None)
-    bg.paste(overlay, (0, 0), overlay)
-    return bg
+    # If template overlay is enabled, render overlay; otherwise draw non-template bottom caption
+    if st.session_state.get("apply_tpl", True):
+        overlay = _make_template_overlay(caption or "", tpl, font_path=st.session_state.get("font_path") or None)
+        bg.paste(overlay, (0, 0), overlay)
+        return bg
+    else:
+        # Non-template: render bottom-centered caption block similar to shorts_maker2
+        from PIL import ImageDraw
+        cap = (caption or "").strip()
+        if cap:
+            dr = ImageDraw.Draw(bg)
+            font_mid = safe_font(st.session_state.get("font_path") or None, size=int(st.session_state.get("tpl_size_mid", 54)))
+            maxw = VID_W - 120
+            # simple wrap - reuse shorts_maker2 style
+            def _wrap(draw, text, font, max_width, max_lines):
+                words = text.split()
+                lines = []
+                line = []
+                for w in words:
+                    line.append(w)
+                    test = " ".join(line)
+                    bb = draw.textbbox((0, 0), test, font=font)
+                    if (bb[2]-bb[0]) > max_width:
+                        if len(line) > 1:
+                            line.pop()
+                        lines.append(" ".join(line))
+                        line = [w]
+                        if len(lines) >= max_lines:
+                            break
+                if line and len(lines) < max_lines:
+                    lines.append(" ".join(line))
+                return lines
+            lines = _wrap(dr, cap, font_mid, maxw, 3)
+            cur_y = VID_H - 300 + 30
+            for l in lines[:3]:
+                bb = dr.textbbox((0, 0), l, font=font_mid)
+                tw, th = bb[2]-bb[0], bb[3]-bb[1]
+                dr.text(((VID_W - tw)//2, cur_y), l, font=font_mid, fill=(245,245,245))
+                cur_y += th + 12
+        return bg
 
 
 def main():
@@ -1385,6 +1521,90 @@ def main():
                 if k not in st.session_state:
                     st.session_state[k] = v
         st.session_state["_ui_prefs_loaded"] = True
+        # Auto-apply last preset if available (built-in or user-saved), once
+        try:
+            last = st.session_state.get("last_preset_name")
+            if last and not st.session_state.get("_preset_auto_applied"):
+                if last in PRESET_TEMPLATES:
+                    p = PRESET_TEMPLATES[last]
+                    st.session_state["tpl_header_prefill"] = p.get("header", "")
+                    st.session_state["tpl_subheader_prefill"] = p.get("subheader", "")
+                    st.session_state["tpl_footer_prefill"] = p.get("footer", "")
+                    st.session_state["tpl_cta_prefill"] = p.get("cta_label", "제품 보기")
+                    st.session_state["tpl_profile_prefill"] = p.get("profile_name", "@channel")
+                    col = p.get("theme_color", [16,153,127])
+                    st.session_state["tpl_color_prefill"] = f"#{col[0]:02x}{col[1]:02x}{col[2]:02x}"
+                    st.session_state["tpl_bar_prefill"] = p.get("bar_height", 90)
+                    st.session_state["tpl_card_prefill"] = p.get("card_height", 280)
+                    pill = p.get("pill", {"x":24, "y":1700, "w":200, "h":64})
+                    st.session_state["tpl_pill_x_prefill"] = pill.get("x", 24)
+                    st.session_state["tpl_pill_y_prefill"] = pill.get("y", 1700)
+                    st.session_state["tpl_pill_w_prefill"] = pill.get("w", 200)
+                    st.session_state["tpl_pill_h_prefill"] = pill.get("h", 64)
+                    st.session_state["tpl_prof_x_prefill"] = p.get("profile_x", 24)
+                    st.session_state["tpl_prof_off_prefill"] = p.get("profile_offset", 18)
+                    fs = p.get("font_sizes", {})
+                    st.session_state["tpl_size_hdr_prefill"] = fs.get("hdr", 40)
+                    st.session_state["tpl_size_title_prefill"] = fs.get("title", 56)
+                    st.session_state["tpl_size_mid_prefill"] = fs.get("mid", 54)
+                    st.session_state["tpl_size_cta_prefill"] = fs.get("cta", 32)
+                    st.session_state["tpl_size_prof_prefill"] = fs.get("prof", 30)
+                    st.session_state["tpl_size_foot_prefill"] = fs.get("foot", 28)
+                    if isinstance(p.get("caption_pos"), str):
+                        st.session_state["tpl_caption_pos_prefill"] = p.get("caption_pos")
+                    if isinstance(p.get("caption_area_h"), (int, float)):
+                        st.session_state["tpl_caption_area_prefill"] = int(p.get("caption_area_h"))
+                    if isinstance(p.get("badge_title"), bool):
+                        st.session_state["tpl_badge_title"] = p.get("badge_title")
+                    if isinstance(p.get("bottom_caption_bar"), bool):
+                        st.session_state["tpl_bottom_caption_bar"] = p.get("bottom_caption_bar")
+                    if isinstance(p.get("bottom_caption_bar_h"), (int, float)):
+                        st.session_state["tpl_bottom_caption_h"] = int(p.get("bottom_caption_bar_h"))
+                    st.session_state["tpl_prefill_pending"] = True
+                    st.session_state["_preset_auto_applied"] = True
+                else:
+                    # Try user-saved presets directory
+                    ppath = os.path.join(OUTPUT_DIR, "tpl_presets", last)
+                    if os.path.exists(ppath):
+                        with open(ppath, "r", encoding="utf-8") as f:
+                            tp = json.load(f)
+                        st.session_state["tpl_header_prefill"] = tp.get("header", "")
+                        st.session_state["tpl_subheader_prefill"] = tp.get("subheader", "")
+                        st.session_state["tpl_footer_prefill"] = tp.get("footer", "")
+                        st.session_state["tpl_cta_prefill"] = tp.get("cta_label", "제품 보기")
+                        st.session_state["tpl_profile_prefill"] = tp.get("profile_name", "@channel")
+                        col = tp.get("theme_color") or [16,153,127]
+                        st.session_state["tpl_color_prefill"] = f"#{col[0]:02x}{col[1]:02x}{col[2]:02x}"
+                        st.session_state["tpl_bar_prefill"] = tp.get("bar_height", 90)
+                        st.session_state["tpl_card_prefill"] = tp.get("card_height", 280)
+                        pill = tp.get("pill") or {"x":24, "y":1700, "w":200, "h":64}
+                        st.session_state["tpl_pill_x_prefill"] = pill.get("x", 24)
+                        st.session_state["tpl_pill_y_prefill"] = pill.get("y", 1700)
+                        st.session_state["tpl_pill_w_prefill"] = pill.get("w", 200)
+                        st.session_state["tpl_pill_h_prefill"] = pill.get("h", 64)
+                        st.session_state["tpl_prof_x_prefill"] = tp.get("profile_x", 24)
+                        st.session_state["tpl_prof_off_prefill"] = tp.get("profile_offset", 18)
+                        fs = tp.get("font_sizes") or {}
+                        st.session_state["tpl_size_hdr_prefill"] = fs.get("hdr", 40)
+                        st.session_state["tpl_size_title_prefill"] = fs.get("title", 56)
+                        st.session_state["tpl_size_mid_prefill"] = fs.get("mid", 54)
+                        st.session_state["tpl_size_cta_prefill"] = fs.get("cta", 32)
+                        st.session_state["tpl_size_prof_prefill"] = fs.get("prof", 30)
+                        st.session_state["tpl_size_foot_prefill"] = fs.get("foot", 28)
+                        if isinstance(tp.get("caption_pos"), str):
+                            st.session_state["tpl_caption_pos_prefill"] = tp.get("caption_pos")
+                        if isinstance(tp.get("caption_area_h"), (int, float)):
+                            st.session_state["tpl_caption_area_prefill"] = int(tp.get("caption_area_h"))
+                        if isinstance(tp.get("badge_title"), bool):
+                            st.session_state["tpl_badge_title"] = tp.get("badge_title")
+                        if isinstance(tp.get("bottom_caption_bar"), bool):
+                            st.session_state["tpl_bottom_caption_bar"] = tp.get("bottom_caption_bar")
+                        if isinstance(tp.get("bottom_caption_bar_h"), (int, float)):
+                            st.session_state["tpl_bottom_caption_h"] = int(tp.get("bottom_caption_bar_h"))
+                        st.session_state["tpl_prefill_pending"] = True
+                        st.session_state["_preset_auto_applied"] = True
+        except Exception:
+            pass
 
     with st.sidebar:
         st.header("Global Options")
@@ -1394,11 +1614,21 @@ def main():
         min_slide = st.slider("Min slide (s)", 1.0, 6.0, st.session_state.get("min_slide", 2.0), 0.5, key="min_slide")
         max_slide = st.slider("Max slide (s)", 2.0, 8.0, st.session_state.get("max_slide", 5.0), 0.5, key="max_slide")
         font_path = st.text_input("Font path (optional)", value=st.session_state.get("font_path", ""), key="font_path")
-        no_tts = st.checkbox("Disable TTS", value=st.session_state.get("no_tts", False), key="no_tts")
-        voice_rate = st.number_input("Voice rate", min_value=120, max_value=240, value=st.session_state.get("voice_rate", 185), step=5, key="voice_rate")
+        no_tts = st.checkbox("Disable TTS", value=st.session_state.get("no_tts", False), key="no_tts", on_change=_save_ui_prefs)
+        tts_engine = st.selectbox("TTS Engine", ["pyttsx3", "edge-tts"], index=(0 if st.session_state.get("tts_engine", "pyttsx3") == "pyttsx3" else 1), key="tts_engine", on_change=_save_ui_prefs)
+        voice_rate = st.number_input("Voice rate", min_value=120, max_value=240, value=st.session_state.get("voice_rate", 185), step=5, key="voice_rate", on_change=_save_ui_prefs)
+        if tts_engine == "edge-tts":
+            st.caption("Edge-TTS options")
+            st.text_input("Edge voice", value=st.session_state.get("edge_voice", "ko-KR-SunHiNeural"), key="edge_voice", on_change=_save_ui_prefs)
+            st.slider("Edge rate (%)", -50, 50, value=st.session_state.get("edge_rate_pct", 0), step=1, key="edge_rate_pct", on_change=_save_ui_prefs)
         cta = st.text_input("CTA", value=st.session_state.get("cta", "더 알아보기는 링크 클릭!"), key="cta")
         music_file = st.file_uploader("Background music (mp3/wav)", type=["mp3", "wav"], key="music")
-        apply_tpl = st.checkbox("Apply template overlay", value=st.session_state.get("apply_tpl", True), key="apply_tpl")
+        apply_tpl = st.checkbox(
+            "Apply template overlay",
+            value=st.session_state.get("apply_tpl", True),
+            key="apply_tpl",
+            on_change=_save_ui_prefs,
+        )
         st.markdown("---")
         st.caption("Price conversion to KRW (approx)")
         price_convert = st.checkbox("Convert price to KRW", value=st.session_state.get("price_convert", False), key="price_convert")
@@ -1420,7 +1650,10 @@ def main():
                 env = {
                     "font_path": st.session_state.get("font_path", ""),
                     "no_tts": st.session_state.get("no_tts", False),
+                    "tts_engine": st.session_state.get("tts_engine", "pyttsx3"),
                     "voice_rate": st.session_state.get("voice_rate", 185),
+                    "edge_voice": st.session_state.get("edge_voice", "ko-KR-SunHiNeural"),
+                    "edge_rate_pct": st.session_state.get("edge_rate_pct", 0),
                     "cta": st.session_state.get("cta", "더 알아보기는 링크 클릭!"),
                     "apply_tpl": st.session_state.get("apply_tpl", True),
                     "price_convert": st.session_state.get("price_convert", False),
@@ -1449,7 +1682,7 @@ def main():
                     # Map loaded values directly to widget keys via prefill dict
                     prefill = {}
                     for k in [
-                        "font_path","no_tts","voice_rate","cta","apply_tpl","price_convert",
+                        "font_path","no_tts","tts_engine","voice_rate","edge_voice","edge_rate_pct","cta","apply_tpl","price_convert",
                         "rate_usd","rate_eur","rate_jpy","rate_cny","duration","min_slide","max_slide",
                         "tpl_avatar_path","tpl_preview_bg_path",
                     ]:
@@ -1474,7 +1707,10 @@ def main():
                 env = {
                     "font_path": st.session_state.get("font_path", ""),
                     "no_tts": st.session_state.get("no_tts", False),
+                    "tts_engine": st.session_state.get("tts_engine", "pyttsx3"),
                     "voice_rate": st.session_state.get("voice_rate", 185),
+                    "edge_voice": st.session_state.get("edge_voice", "ko-KR-SunHiNeural"),
+                    "edge_rate_pct": st.session_state.get("edge_rate_pct", 0),
                     "cta": st.session_state.get("cta", "더 알아보기는 링크 클릭!"),
                     "apply_tpl": st.session_state.get("apply_tpl", True),
                     "price_convert": st.session_state.get("price_convert", False),
@@ -1502,6 +1738,8 @@ def main():
                     "cta_label": st.session_state.get("tpl_cta", "제품 보기"),
                     "profile_name": st.session_state.get("tpl_profile", "@channel"),
                     "theme_color": _hex_to_rgb_tuple(st.session_state.get("tpl_color", "#10997F")),
+                    "caption_pos": st.session_state.get("tpl_caption_pos", "mid"),
+                    "caption_area_h": st.session_state.get("tpl_caption_area", 250),
                     "bar_height": st.session_state.get("tpl_bar", 90),
                     "card_height": st.session_state.get("tpl_card", 280),
                     "pill": {
@@ -1622,6 +1860,10 @@ def main():
                         st.session_state["tpl_footer_prefill"] = tp.get("footer", "")
                         st.session_state["tpl_cta_prefill"] = tp.get("cta_label", "제품 보기")
                         st.session_state["tpl_profile_prefill"] = tp.get("profile_name", "@channel")
+                        if isinstance(tp.get("caption_pos"), str):
+                            st.session_state["tpl_caption_pos_prefill"] = tp.get("caption_pos")
+                        if isinstance(tp.get("caption_area_h"), (int, float)):
+                            st.session_state["tpl_caption_area_prefill"] = int(tp.get("caption_area_h"))
                         col = tp.get("theme_color") or [16,153,127]
                         st.session_state["tpl_color_prefill"] = f"#{col[0]:02x}{col[1]:02x}{col[2]:02x}"
                         # Advanced
@@ -2650,31 +2892,35 @@ def main():
                             price_to_use = convert_price_to_krw(price_to_use, usd=usd_rate, eur=eur_rate, jpy=jpy_rate, cny=cny_rate)
                         if price_to_use:
                             cmd += ["--price", price_to_use]
+                        # Build features to pass to renderer (prioritize overview-pref, then overview, etc.)
+                        features_cmd: list[str] = []
                         if feats2.strip():
-                            for line in feats2.splitlines():
-                                line = line.strip()
-                                if line:
-                                    cmd += ["--feature", line]
+                            features_cmd = [l.strip() for l in feats2.splitlines() if l.strip()]
+                        elif site_sel == "aliexpress" and (overview_pref_lines or []):
+                            features_cmd = refine_features(overview_pref_lines)
                         elif 'overview_lines' in locals() and overview_lines:
-                            for line in refine_features(overview_lines):
-                                cmd += ["--feature", line]
+                            features_cmd = refine_features(overview_lines)
                         elif 'spec_lines' in locals() and spec_lines:
-                            for line in refine_features(spec_lines):
-                                cmd += ["--feature", line]
+                            features_cmd = refine_features(spec_lines)
                         elif 'desc_text' in locals() and isinstance(desc_text, str) and desc_text.strip():
                             try:
                                 import re as _re
                                 desc_feats = [_s.strip() for _s in _re.split(r"[•\n\.\|\-–·]+", desc_text) if 6 <= len(_s.strip()) <= 120]
-                                for line in refine_features(desc_feats):
-                                    cmd += ["--feature", line]
+                                features_cmd = refine_features(desc_feats)
                             except Exception:
-                                pass
+                                features_cmd = []
                         elif locals().get("tt_feats"):
-                            for line in refine_features(locals()["tt_feats"]):
-                                cmd += ["--feature", line]
+                            features_cmd = refine_features(locals()["tt_feats"])
+                        for line in features_cmd:
+                            cmd += ["--feature", line]
                         if no_tts:
                             cmd.append("--no_tts")
+                        # TTS options
                         cmd += ["--voice_rate", str(voice_rate)]
+                        cmd += ["--tts_backend", st.session_state.get("tts_engine", "pyttsx3")]
+                        if st.session_state.get("tts_engine") == "edge-tts":
+                            cmd += ["--edge_voice", st.session_state.get("edge_voice", "ko-KR-SunHiNeural")]
+                            cmd += ["--edge_rate_pct", str(int(st.session_state.get("edge_rate_pct", 0)))]
                         if font_path:
                             cmd += ["--font_path", font_path]
                         if cta:
@@ -2894,7 +3140,12 @@ def main():
                         cmd += ["--feature", line]
             if no_tts:
                 cmd.append("--no_tts")
+            # TTS options
             cmd += ["--voice_rate", str(voice_rate)]
+            cmd += ["--tts_backend", st.session_state.get("tts_engine", "pyttsx3")]
+            if st.session_state.get("tts_engine") == "edge-tts":
+                cmd += ["--edge_voice", st.session_state.get("edge_voice", "ko-KR-SunHiNeural")]
+                cmd += ["--edge_rate_pct", str(int(st.session_state.get("edge_rate_pct", 0)))]
             if font_path:
                 cmd += ["--font_path", font_path]
             if cta:
@@ -2986,7 +3237,12 @@ def main():
                         cmd += ["--feature", line]
             if no_tts:
                 cmd.append("--no_tts")
+            # TTS options
             cmd += ["--voice_rate", str(voice_rate)]
+            cmd += ["--tts_backend", st.session_state.get("tts_engine", "pyttsx3")]
+            if st.session_state.get("tts_engine") == "edge-tts":
+                cmd += ["--edge_voice", st.session_state.get("edge_voice", "ko-KR-SunHiNeural")]
+                cmd += ["--edge_rate_pct", str(int(st.session_state.get("edge_rate_pct", 0)))]
             if font_path:
                 cmd += ["--font_path", font_path]
             if cta:
@@ -3071,11 +3327,138 @@ def main():
             st.session_state["tpl_size_cta"] = fs.get("cta", 32)
             st.session_state["tpl_size_prof"] = fs.get("prof", 30)
             st.session_state["tpl_size_foot"] = fs.get("foot", 28)
+            # Extra style keys
+            if isinstance(p.get("caption_pos"), str):
+                st.session_state["tpl_caption_pos"] = p.get("caption_pos")
+            if isinstance(p.get("caption_area_h"), (int, float)):
+                st.session_state["tpl_caption_area"] = int(p.get("caption_area_h"))
+            if isinstance(p.get("badge_title"), bool):
+                st.session_state["tpl_badge_title"] = p.get("badge_title")
+            if isinstance(p.get("bottom_caption_bar"), bool):
+                st.session_state["tpl_bottom_caption_bar"] = p.get("bottom_caption_bar")
+            if isinstance(p.get("bottom_caption_bar_h"), (int, float)):
+                st.session_state["tpl_bottom_caption_h"] = int(p.get("bottom_caption_bar_h"))
+            if isinstance(p.get("caption_pos"), str):
+                st.session_state["tpl_caption_pos"] = p.get("caption_pos")
             st.success(f"Applied preset: {preset}")
+            # Remember last preset (built-in)
+            st.session_state["last_preset_name"] = preset
+            _save_ui_prefs()
             try:
                 st.rerun()
             except Exception:
                 pass
+
+        # User presets: save/load to disk next to Apply Preset
+        col_up1, col_up2, col_up3 = st.columns([2, 1, 1])
+        with col_up1:
+            up_name = st.text_input("Preset name (save)", key="tpl_user_preset_name", placeholder="ex) my_green_bottom")
+        with col_up2:
+            if st.button("Save Current as Preset"):
+                # Build a template dict identical to Save Template JSON
+                try:
+                    os.makedirs(os.path.join(OUTPUT_DIR, "tpl_presets"), exist_ok=True)
+                    data = {
+                        "header": st.session_state.get("tpl_header", ""),
+                        "subheader": st.session_state.get("tpl_subheader", ""),
+                        "footer": st.session_state.get("tpl_footer", ""),
+                        "cta_label": st.session_state.get("tpl_cta", "제품 보기"),
+                        "profile_name": st.session_state.get("tpl_profile", "@channel"),
+                        "theme_color": [int(st.session_state.get("tpl_color", "#10997F")[1:3],16), int(st.session_state.get("tpl_color", "#10997F")[3:5],16), int(st.session_state.get("tpl_color", "#10997F")[5:7],16)],
+                        "caption_pos": st.session_state.get("tpl_caption_pos", "mid"),
+                        "caption_area_h": st.session_state.get("tpl_caption_area", 250),
+                        "bar_height": st.session_state.get("tpl_bar", 90),
+                        "card_height": st.session_state.get("tpl_card", 280),
+                        "pill": {"x": st.session_state.get("tpl_pill_x", 24), "y": st.session_state.get("tpl_pill_y", 1700), "w": st.session_state.get("tpl_pill_w", 200), "h": st.session_state.get("tpl_pill_h", 64)},
+                        "profile_x": st.session_state.get("tpl_prof_x", 24),
+                        "profile_offset": st.session_state.get("tpl_prof_off", 18),
+                        "font_sizes": {"hdr": st.session_state.get("tpl_size_hdr", 40), "title": st.session_state.get("tpl_size_title", 56), "mid": st.session_state.get("tpl_size_mid", 54), "cta": st.session_state.get("tpl_size_cta", 32), "prof": st.session_state.get("tpl_size_prof", 30), "foot": st.session_state.get("tpl_size_foot", 28)},
+                        "badge_title": bool(st.session_state.get("tpl_badge_title", False)),
+                        "bottom_caption_bar": bool(st.session_state.get("tpl_bottom_caption_bar", False)),
+                        "bottom_caption_bar_h": int(st.session_state.get("tpl_bottom_caption_h", 140)),
+                    }
+                    import re as _re
+                    nm = (up_name or f"preset_{datetime.now().strftime('%Y%m%d_%H%M%S')}").strip()
+                    nm = _re.sub(r"[^A-Za-z0-9_\-]+", "_", nm)
+                    ppath = os.path.join(OUTPUT_DIR, "tpl_presets", f"{nm}.json")
+                    with open(ppath, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    st.success(f"Saved preset: {ppath}")
+                except Exception as e:
+                    st.error(f"Failed to save preset: {e}")
+        with col_up3:
+            # Load from existing presets folder
+            try:
+                preset_dir = os.path.join(OUTPUT_DIR, "tpl_presets")
+                files = [f for f in os.listdir(preset_dir) if f.endswith('.json')]
+            except Exception:
+                files = []
+            sel = st.selectbox("Load saved preset", ["(select)"] + files, key="tpl_user_preset_sel")
+            if st.button("Load Preset") and sel and sel != "(select)":
+                try:
+                    ppath = os.path.join(OUTPUT_DIR, "tpl_presets", sel)
+                    with open(ppath, "r", encoding="utf-8") as f:
+                        tp = json.load(f)
+                    # Apply via prefill then rerun (reuse logic similar to Load Template JSON)
+                    st.session_state["tpl_header_prefill"] = tp.get("header", "")
+                    st.session_state["tpl_subheader_prefill"] = tp.get("subheader", "")
+                    st.session_state["tpl_footer_prefill"] = tp.get("footer", "")
+                    st.session_state["tpl_cta_prefill"] = tp.get("cta_label", "제품 보기")
+                    st.session_state["tpl_profile_prefill"] = tp.get("profile_name", "@channel")
+                    col = tp.get("theme_color") or [16,153,127]
+                    st.session_state["tpl_color_prefill"] = f"#{col[0]:02x}{col[1]:02x}{col[2]:02x}"
+                    st.session_state["tpl_bar_prefill"] = tp.get("bar_height", 90)
+                    st.session_state["tpl_card_prefill"] = tp.get("card_height", 280)
+                    pill = tp.get("pill") or {"x":24, "y":1700, "w":200, "h":64}
+                    st.session_state["tpl_pill_x_prefill"] = pill.get("x", 24)
+                    st.session_state["tpl_pill_y_prefill"] = pill.get("y", 1700)
+                    st.session_state["tpl_pill_w_prefill"] = pill.get("w", 200)
+                    st.session_state["tpl_pill_h_prefill"] = pill.get("h", 64)
+                    st.session_state["tpl_prof_x_prefill"] = tp.get("profile_x", 24)
+                    st.session_state["tpl_prof_off_prefill"] = tp.get("profile_offset", 18)
+                    fs = tp.get("font_sizes") or {}
+                    st.session_state["tpl_size_hdr_prefill"] = fs.get("hdr", 40)
+                    st.session_state["tpl_size_title_prefill"] = fs.get("title", 56)
+                    st.session_state["tpl_size_mid_prefill"] = fs.get("mid", 54)
+                    st.session_state["tpl_size_cta_prefill"] = fs.get("cta", 32)
+                    st.session_state["tpl_size_prof_prefill"] = fs.get("prof", 30)
+                    st.session_state["tpl_size_foot_prefill"] = fs.get("foot", 28)
+                    if isinstance(tp.get("caption_pos"), str):
+                        st.session_state["tpl_caption_pos_prefill"] = tp.get("caption_pos")
+                    if isinstance(tp.get("caption_area_h"), (int, float)):
+                        st.session_state["tpl_caption_area_prefill"] = int(tp.get("caption_area_h"))
+                    if isinstance(tp.get("badge_title"), bool):
+                        st.session_state["tpl_badge_title"] = tp.get("badge_title")
+                    if isinstance(tp.get("bottom_caption_bar"), bool):
+                        st.session_state["tpl_bottom_caption_bar"] = tp.get("bottom_caption_bar")
+                    if isinstance(tp.get("bottom_caption_bar_h"), (int, float)):
+                        st.session_state["tpl_bottom_caption_h"] = int(tp.get("bottom_caption_bar_h"))
+                    st.session_state["tpl_prefill_pending"] = True
+                    st.success(f"Loaded preset: {sel}")
+                    st.session_state["last_preset_name"] = sel  # remember last user preset filename
+                    _save_ui_prefs()
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception as e:
+                    st.error(f"Failed to load preset: {e}")
+            # Delete control
+            col_pd2 = st.columns(1)[0]
+            with col_pd2:
+                if st.button("Delete Preset") and sel and sel != "(select)":
+                    try:
+                        src = os.path.join(OUTPUT_DIR, "tpl_presets", sel)
+                        if os.path.exists(src):
+                            os.remove(src)
+                        st.success("Deleted preset.")
+                        st.session_state["tpl_user_preset_sel"] = "(select)"
+                        try:
+                            st.rerun()
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        st.error(f"Failed to delete: {e}")
         # Apply any pending Template-prefills before creating the widgets
         if st.session_state.get("tpl_prefill_pending"):
             if "tpl_header_prefill" in st.session_state:
@@ -3119,6 +3502,10 @@ def main():
                 st.session_state["tpl_size_prof"] = st.session_state.pop("tpl_size_prof_prefill")
             if "tpl_size_foot_prefill" in st.session_state:
                 st.session_state["tpl_size_foot"] = st.session_state.pop("tpl_size_foot_prefill")
+            if "tpl_caption_pos_prefill" in st.session_state:
+                st.session_state["tpl_caption_pos"] = st.session_state.pop("tpl_caption_pos_prefill")
+            if "tpl_caption_area_prefill" in st.session_state:
+                st.session_state["tpl_caption_area"] = st.session_state.pop("tpl_caption_area_prefill")
             st.session_state["tpl_prefill_pending"] = False
         col_t1, col_t2 = st.columns(2)
         with col_t1:
@@ -3158,6 +3545,21 @@ def main():
                 size_cta = st.number_input("CTA size", 12, 96, value=st.session_state.get("tpl_size_cta", 32), key="tpl_size_cta")
                 size_prof = st.number_input("Profile size", 12, 96, value=st.session_state.get("tpl_size_prof", 30), key="tpl_size_prof")
                 size_foot = st.number_input("Footer size", 12, 96, value=st.session_state.get("tpl_size_foot", 28), key="tpl_size_foot")
+            # Caption position for template captions
+            cap_pos = st.selectbox(
+                "Caption position",
+                ["mid", "bottom"],
+                index=["mid","bottom"].index(st.session_state.get("tpl_caption_pos", "mid")),
+                key="tpl_caption_pos",
+                on_change=_save_ui_prefs,
+            )
+            cap_area = st.number_input(
+                "Caption area height (px)",
+                120, 600,
+                value=st.session_state.get("tpl_caption_area", 250),
+                key="tpl_caption_area",
+                on_change=_save_ui_prefs,
+            )
 
         st.caption("Save/Load template text")
         col_s1, col_s2 = st.columns(2)
@@ -3170,12 +3572,17 @@ def main():
                     "cta_label": st.session_state.get("tpl_cta", "제품 보기"),
                     "profile_name": st.session_state.get("tpl_profile", "@channel"),
                     "theme_color": [int(st.session_state.get("tpl_color", "#10997F")[1:3],16), int(st.session_state.get("tpl_color", "#10997F")[3:5],16), int(st.session_state.get("tpl_color", "#10997F")[5:7],16)],
+                    "caption_pos": st.session_state.get("tpl_caption_pos", "mid"),
+                    "caption_area_h": st.session_state.get("tpl_caption_area", 250),
                     "bar_height": st.session_state.get("tpl_bar", 90),
                     "card_height": st.session_state.get("tpl_card", 280),
                     "pill": {"x": st.session_state.get("tpl_pill_x", 24), "y": st.session_state.get("tpl_pill_y", 1700), "w": st.session_state.get("tpl_pill_w", 200), "h": st.session_state.get("tpl_pill_h", 64)},
                     "profile_x": st.session_state.get("tpl_prof_x", 24),
                     "profile_offset": st.session_state.get("tpl_prof_off", 18),
                     "font_sizes": {"hdr": st.session_state.get("tpl_size_hdr", 40), "title": st.session_state.get("tpl_size_title", 56), "mid": st.session_state.get("tpl_size_mid", 54), "cta": st.session_state.get("tpl_size_cta", 32), "prof": st.session_state.get("tpl_size_prof", 30), "foot": st.session_state.get("tpl_size_foot", 28)},
+                    "badge_title": bool(st.session_state.get("tpl_badge_title", False)),
+                    "bottom_caption_bar": bool(st.session_state.get("tpl_bottom_caption_bar", False)),
+                    "bottom_caption_bar_h": int(st.session_state.get("tpl_bottom_caption_h", 140)),
                 }
                 st.download_button("Download template.json", data=json.dumps(data, ensure_ascii=False, indent=2), file_name="template.json", mime="application/json")
         with col_s2:
@@ -3234,7 +3641,23 @@ def main():
             st.caption(f"미리보기 폰트: {cur_font}")
             st.info("한글이 깨지면 좌측 상단 'Font path'에 한글 폰트(.ttf/.ttc) 경로를 지정하세요. 예: /usr/share/fonts/truetype/nanum/NanumGothic.ttf")
         with prev_col1:
-            img = make_template_preview_image(st.session_state.get("tpl_preview_caption", ""), st.session_state.get("tpl_preview_bg_path"))
+            # Build preview caption: prefer manual preview text; else use first script/feature line
+            _cap = st.session_state.get("tpl_preview_caption", "") or ""
+            if not _cap:
+                try:
+                    scr_lines = [l.strip() for l in (st.session_state.get("script_images", "") or "").splitlines() if l.strip()]
+                except Exception:
+                    scr_lines = []
+                if scr_lines:
+                    _cap = scr_lines[0]
+                else:
+                    try:
+                        feat_lines = [l.strip() for l in (st.session_state.get("features_images", "") or "").splitlines() if l.strip()]
+                    except Exception:
+                        feat_lines = []
+                    if feat_lines:
+                        _cap = f"• {feat_lines[0]}"
+            img = make_template_preview_image(_cap, st.session_state.get("tpl_preview_bg_path"))
             st.image(img, caption="Template 미리보기 (1080x1920)", width='stretch')
 
 
