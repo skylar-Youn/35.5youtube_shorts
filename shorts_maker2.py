@@ -324,56 +324,22 @@ def make_image_slide(src_path: str, caption: Optional[str], duration: float, fon
         except Exception:
             pass
 
-    # 3) Dynamic caption (moves with video)
-    if caption:
-        if tpl:
-            # Place caption below the fixed card area
-            bar_h = max(40, min(H // 4, int(tpl.bar_height)))
-            card_h = max(120, min(H // 2, int(tpl.card_height)))
-            cap_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-            dr = ImageDraw.Draw(cap_img)
-            font_mid = safe_font(font_path, size=max(18, int(tpl.mid_size)))
-            maxw = W - 140
-            lines = _wrap_lines(dr, caption, font_mid, maxw, max_lines=3)
-            # Compute vertical position based on caption_pos
-            if getattr(tpl, "caption_pos", "mid") == "bottom":
-                # total text height
-                total_h = 0
-                hs = []
-                for l in lines:
-                    bb = dr.textbbox((0, 0), l, font=font_mid)
-                    h = bb[3] - bb[1]
-                    hs.append(h)
-                    total_h += h
-                total_h += max(0, (len(lines) - 1)) * 8
-                area_h = max(120, int(getattr(tpl, "caption_area_h", 250)))
-                area_top = H - area_h
-                # place at top of the area with small margin
-                y0 = area_top + 10
-                # if text would overflow, anchor to bottom inside area
-                if y0 + total_h > H - 10:
-                    y0 = max(area_top + 10, H - 10 - total_h)
-            else:
-                y0 = bar_h + card_h + 60
-            for l in lines:
-                bb = dr.textbbox((0, 0), l, font=font_mid)
-                tw, th = bb[2] - bb[0], bb[3] - bb[1]
-                dr.text(((W - tw) // 2, y0), l, font=font_mid, fill=(20, 20, 20, 255))
-                y0 += th + 8
-            layers.append(ImageClip(np.array(cap_img)).with_duration(duration))
-        else:
-            # Non-template: bottom-centered caption block
-            txt_img = Image.new("RGBA", (W, 300), (0, 0, 0, 0))
-            dr = ImageDraw.Draw(txt_img)
-            font = safe_font(font_path, size=54)
-            lines = _wrap_lines(dr, caption, font, max_width=W - 120, max_lines=3)
-            cur_y = 30
-            for l in lines[:3]:
-                bb = dr.textbbox((0, 0), l, font=font)
-                tw, th = bb[2] - bb[0], bb[3] - bb[1]
-                dr.text(((W - tw)//2, cur_y), l, font=font, fill=(245,245,245,255))
-                cur_y += th + 12
-            layers.append(ImageClip(np.array(txt_img)).with_duration(duration).with_position(("center", "bottom")))
+    # 3) Dynamic caption
+    # For template overlays, draw caption inside the overlay (on top) to avoid being covered.
+    # For non-template, draw caption as part of moving layers here.
+    if caption and not tpl:
+        # Non-template: bottom-centered caption block
+        txt_img = Image.new("RGBA", (W, 300), (0, 0, 0, 0))
+        dr = ImageDraw.Draw(txt_img)
+        font = safe_font(font_path, size=54)
+        lines = _wrap_lines(dr, caption, font, max_width=W - 120, max_lines=3)
+        cur_y = 30
+        for l in lines[:3]:
+            bb = dr.textbbox((0, 0), l, font=font)
+            tw, th = bb[2] - bb[0], bb[3] - bb[1]
+            dr.text(((W - tw)//2, cur_y), l, font=font, fill=(245,245,245,255))
+            cur_y += th + 12
+        layers.append(ImageClip(np.array(txt_img)).with_duration(duration).with_position(("center", "bottom")))
 
     # 4) Compose moving layers and apply Ken Burns zoom
     moving = CompositeVideoClip(layers).with_duration(duration)
@@ -381,7 +347,8 @@ def make_image_slide(src_path: str, caption: Optional[str], duration: float, fon
 
     # 5) Composite fixed overlay elements on top (header/subheader/footer/cta/profile)
     if tpl:
-        overlay = _make_template_overlay(None, tpl, font_path)  # no dynamic caption in fixed overlay
+        # Pass caption into overlay so text sits above any bottom caption bar
+        overlay = _make_template_overlay(caption or None, tpl, font_path)
         overlay_clip = ImageClip(np.array(overlay)).with_duration(duration)
         final = CompositeVideoClip([moving, overlay_clip]).with_duration(duration)
         return final
@@ -703,6 +670,7 @@ def main():
     # Script (text) save/load
     ap.add_argument("--script_json", type=str, help="제목/가격/특징/CTA를 담은 JSON 파일 경로")
     ap.add_argument("--save_script", type=str, help="현재 스크립트 텍스트를 JSON으로 저장")
+    ap.add_argument("--script_text", type=str, help="수동 대본 텍스트(줄바꿈 포함)")
     ap.add_argument("--pdf_mode", choices=["page", "image", "auto"], default="auto",
                     help="PDF 처리 방식: 전체 페이지 렌더(page), 이미지 블록 추출(image), 자동(auto)")
     ap.add_argument("--min_img_ratio", type=float, default=0.05,
@@ -794,7 +762,32 @@ def main():
             im.save(fn, "JPEG", quality=90)
             images.append(fn)
 
-    script = generate_script(info, cta=args.cta)
+    # Build script: prefer manual text (script_text or script_json.script), else generate from features
+    script_text_manual = None
+    if getattr(args, "script_text", None):
+        script_text_manual = args.script_text
+    elif script_data and isinstance(script_data.get("script"), str):
+        script_text_manual = script_data.get("script")
+
+    if script_text_manual:
+        # Parse manual script lines into hook/core/closing
+        lines = [l.strip() for l in (script_text_manual or "").splitlines() if l.strip()]
+        hook = [lines[0]] if lines else [f"{info.title} — 핵심만 30초 요약!"]
+        core = []
+        closing = []
+        if len(lines) > 1:
+            core = lines[1:]
+        # Heuristic: if last line seems CTA, move to closing
+        if core:
+            last = core[-1]
+            low = last.lower()
+            if any(k in low for k in ["더 알아보기", "구매", "자세히", "click", "바로가기", "cta"]):
+                closing = [core.pop()]
+        if not closing:
+            closing = [args.cta or info.cta]
+        script = {"hook": hook, "core": core, "closing": closing}
+    else:
+        script = generate_script(info, cta=args.cta)
 
     # Template config assembling
     tpl_conf = None

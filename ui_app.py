@@ -2913,6 +2913,9 @@ def main():
                             features_cmd = refine_features(locals()["tt_feats"])
                         for line in features_cmd:
                             cmd += ["--feature", line]
+                        # Manual script text override (if provided)
+                        if (st.session_state.get("script_images") or "").strip():
+                            cmd += ["--script_text", st.session_state.get("script_images")]
                         if no_tts:
                             cmd.append("--no_tts")
                         # TTS options
