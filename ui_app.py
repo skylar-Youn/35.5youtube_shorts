@@ -74,6 +74,8 @@ def _save_ui_prefs():
         "images_prefill_limit",
         # Thumbnails
         "images_thumbs_hq",
+        # Overview preference
+        "images_prefer_overview",
         # Selection behavior
         "images_use_selected_only",
         # Site choice
@@ -831,6 +833,40 @@ def upgrade_aliexpress_image_url(u: str) -> str:
         return s
     except Exception:
         return u
+
+
+def parse_overview_from_html_static(html: str) -> list[str]:
+    """Best-effort '개요' extraction from static HTML (no JS), AliExpress style.
+
+    Looks for description wrapper and collects text until the first <img>.
+    """
+    try:
+        soup = BeautifulSoup(html, "lxml")
+        wrap = soup.find(lambda tag: getattr(tag, 'name', '') == 'div' and tag.has_attr('class') and any('description--wrap' in c for c in tag.get('class', [])))
+        if not wrap:
+            wrap = soup.select_one('#product-description, [class*="product-description"]')
+        if not wrap:
+            return []
+        chunks: list[str] = []
+        for child in wrap.children:
+            try:
+                nm = getattr(child, 'name', None)
+                if nm == 'img' or (nm and child.find('img')):
+                    break
+                t = child.get_text("\n", strip=True) if getattr(child, 'get_text', None) else str(child).strip()
+                if t:
+                    chunks.append(t)
+            except Exception:
+                continue
+        import re as _re
+        lines = []
+        for c in _re.split(r"[•\n\.\|\-–·]+", "\n".join(chunks)):
+            cc = c.strip()
+            if 6 <= len(cc) <= 160:
+                lines.append(cc)
+        return lines[:10]
+    except Exception:
+        return []
 
 
 def parse_product_text_from_html(html: str):
@@ -1859,6 +1895,7 @@ def main():
             pw_stealth = st.checkbox("Stealth", value=bool(st.session_state.get("images_fetch_pw_stealth", True)), key="images_fetch_pw_stealth", on_change=_save_ui_prefs)
             deep_fetch = st.checkbox("Deep fetch (scroll/expand)", value=bool(st.session_state.get("images_fetch_deep", False)), key="images_fetch_deep", on_change=_save_ui_prefs)
             detail_only = st.checkbox("Detail-only images (1x 더보기)", value=bool(st.session_state.get("images_fetch_detail_only", False)), key="images_fetch_detail_only", on_change=_save_ui_prefs)
+            prefer_overview = st.checkbox("Prefer '개요' for Features (AliExpress)", value=bool(st.session_state.get("images_prefer_overview", True)), key="images_prefer_overview", on_change=_save_ui_prefs)
         with colf3:
             pw_mobile = st.checkbox("Mobile", value=bool(st.session_state.get("images_fetch_pw_mobile", True)), key="images_fetch_pw_mobile", on_change=_save_ui_prefs)
             pw_wait = st.selectbox("Wait state", ["networkidle", "domcontentloaded", "load"], index=["networkidle","domcontentloaded","load"].index(st.session_state.get("images_fetch_pw_wait", "networkidle")), key="images_fetch_pw_wait", on_change=_save_ui_prefs)
@@ -1900,6 +1937,27 @@ def main():
                 if html:
                     prefill_limit = int(st.session_state.get("images_prefill_limit", int(st.session_state.get("images_fetch_count", 4))))
                     t_title, t_price, t_feats = parse_product_text_from_html(html)
+                    # Prefer overview for AliExpress when enabled
+                    overview_pref_lines: list[str] | None = None
+                    if (st.session_state.get("images_prefer_overview", True) and site_sel == "aliexpress"):
+                        # Try static first, then Playwright fallback
+                        try:
+                            tmp = parse_overview_from_html_static(html)
+                        except Exception:
+                            tmp = []
+                        if tmp:
+                            overview_pref_lines = tmp
+                        elif use_playwright:
+                            try:
+                                overview_pref_lines = fetch_overview_only_playwright(
+                                    url_fetch,
+                                    timeout=int(fetch_timeout),
+                                    use_stealth=pw_stealth,
+                                    mobile=pw_mobile,
+                                    wait_state=pw_wait,
+                                ) or []
+                            except Exception:
+                                overview_pref_lines = None
                     # Download images either via Selenium 56, detail-only, deep fetch, or built-in
                     dpaths = []
                     desc_text = None
@@ -2101,13 +2159,20 @@ def main():
                     if dpaths:
                         cur = st.session_state.get("images_fetched_paths") or []
                         st.session_state["images_fetched_paths"] = cur + dpaths
-                    # Prefill features: prefer overview lines > specification lines > description lines
-                    if 'overview_lines' in locals() and overview_lines:
+                    # Prefill features: prefer explicit preference > overview lines > specification lines > description lines
+                    features_set = False
+                    if overview_pref_lines:
+                        st.session_state["features_images_prefill"] = "\n".join(refine_features(overview_pref_lines))
+                        st.session_state["script_images_prefill"] = "\n".join(overview_pref_lines)
+                        features_set = True
+                    elif 'overview_lines' in locals() and overview_lines:
                         st.session_state["features_images_prefill"] = "\n".join(refine_features(overview_lines))
                         st.session_state["script_images_prefill"] = "\n".join(overview_lines)
+                        features_set = True
                     elif spec_lines:
                         st.session_state["features_images_prefill"] = "\n".join(refine_features(spec_lines))
                         st.session_state["script_images_prefill"] = "\n".join(spec_lines)
+                        features_set = True
                     elif desc_text:
                         try:
                             import re as _re
@@ -2117,6 +2182,7 @@ def main():
                         if cand:
                             st.session_state["features_images_prefill"] = "\n".join(refine_features(cand))
                         st.session_state["script_images_prefill"] = desc_text
+                        features_set = True
                     # Optional KRW conversion for display/script
                     if price_convert and t_price:
                         t_price_disp = convert_price_to_krw(t_price, usd=usd_rate, eur=eur_rate, jpy=jpy_rate, cny=cny_rate)
@@ -2128,7 +2194,7 @@ def main():
                     if t_price_disp:
                         st.session_state["price_images_prefill"] = t_price_disp
                     # If specification lines exist, keep them; otherwise fallback to generic t_feats
-                    if t_feats and not spec_lines:
+                    if t_feats and not spec_lines and not features_set:
                         st.session_state["features_images_prefill"] = "\n".join(t_feats)
                     # Generate a narration script from template (or fallback)
                     tpl_default = "{title} — 핵심만 30초 요약!\n{features_bullets}\n{price_line}\n{cta}"
@@ -2230,6 +2296,27 @@ def main():
                     else:
                         parsed_title, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(fetch_count))
                         tt_title, tt_price, tt_feats = parse_product_text_from_html(html)
+                # Even if not detail-only, when preferred and AliExpress, try overview-only to update Features UI (for UI fields)
+                overview_pref_lines = []
+                if site_sel == "aliexpress" and st.session_state.get("images_prefer_overview", True):
+                    try:
+                        ov_static = parse_overview_from_html_static(html)
+                        if ov_static:
+                            overview_pref_lines = ov_static
+                    except Exception:
+                        pass
+                    if (not overview_pref_lines) and use_playwright:
+                        try:
+                            overview_pref_lines = fetch_overview_only_playwright(
+                                url_fetch,
+                                timeout=int(fetch_timeout),
+                                use_stealth=pw_stealth,
+                                mobile=pw_mobile,
+                                wait_state=pw_wait,
+                            ) or []
+                        except Exception:
+                            pass
+
                 if not img_urls:
                     st.error("No images found from URL")
                 else:
@@ -2281,6 +2368,10 @@ def main():
                     if len(paths_to_run) < 2:
                         st.error("Need at least 2 images to run. Select more or fetch again.")
                     else:
+                        # Update UI features when overview is preferred and available (no rerun to avoid interrupting run)
+                        if site_sel == "aliexpress" and overview_pref_lines:
+                            st.session_state["features_images_prefill"] = "\n".join(refine_features(overview_pref_lines))
+                            st.session_state["images_prefill_pending"] = True
                         # 4) Build and run shorts_maker2.py
                         cmd = [
                             os.path.basename(os.sys.executable),
