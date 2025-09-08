@@ -149,6 +149,22 @@ def save_uploaded_file(file, subdir=""):
     return path
 
 
+def _safe_placeholder_code(placeholder, text: str) -> bool:
+    """Safely update a Streamlit placeholder with code text.
+
+    Returns False if the UI update appears to fail (e.g., session disconnected),
+    so callers can stop streaming and clean up long‑running tasks.
+    """
+    try:
+        placeholder.code(text)
+        return True
+    except Exception:
+        # When the client disconnects or reruns, Streamlit/Tornado can close the
+        # websocket underneath. Attempting to update the UI at that moment may
+        # raise from the app thread. Treat it as a signal to stop streaming.
+        return False
+
+
 def run_cmd(cmd_list):
     start = time.time()
     proc = subprocess.Popen(
@@ -158,15 +174,33 @@ def run_cmd(cmd_list):
         text=True,
         bufsize=1,
     )
-    logs = []
+    logs: list[str] = []
     log_area = st.empty()
-    for line in iter(proc.stdout.readline, ""):
-        logs.append(line)
-        # Keep last 100 lines visible
-        log_area.code("".join(logs[-100:]))
-    proc.stdout.close()
+    last_flush = 0.0
+    try:
+        for line in iter(proc.stdout.readline, ""):
+            logs.append(line)
+            # Throttle UI updates to reduce websocket chatter
+            now = time.time()
+            if now - last_flush >= 0.20:
+                if not _safe_placeholder_code(log_area, "".join(logs[-200:])):
+                    # UI likely gone; stop streaming and terminate process
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                    break
+                last_flush = now
+    finally:
+        try:
+            if proc.stdout:
+                proc.stdout.close()
+        except Exception:
+            pass
     ret = proc.wait()
     duration = time.time() - start
+    # Final flush of logs (best effort)
+    _safe_placeholder_code(log_area, "".join(logs[-200:]))
     return ret, "".join(logs), duration
 
 
@@ -1363,7 +1397,7 @@ def main():
                 )
         with col_all2:
             all_up = st.file_uploader("Load All JSON", type=["json"], key="all_json_upload")
-            if all_up is not None:
+            if all_up is not None and not st.session_state.get("_all_json_loaded_once"):
                 try:
                     js = json.loads(all_up.read().decode("utf-8"))
                     # Env apply via prefill
@@ -1425,8 +1459,10 @@ def main():
                         st.session_state["script_template_images_prefill"] = stpl.get("images")
                         st.session_state["images_prefill_pending"] = True
                     st.success("All settings loaded; applying…")
+                    # Prevent repeat processing and let prefills apply in this same run
                     try:
-                        st.rerun()
+                        st.session_state["all_json_upload"] = None
+                        st.session_state["_all_json_loaded_once"] = True
                     except Exception:
                         pass
                 except Exception as e:
