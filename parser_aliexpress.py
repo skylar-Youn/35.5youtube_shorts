@@ -91,7 +91,7 @@ def parse(html: str) -> AliParsed:
             joined = "\n".join(buf)
             for c in re.split(r"[•\n\.\|\-–·]+", joined):
                 cc = c.strip()
-                if 6 <= len(cc) <= 160:
+                if 6 <= len(cc) <= 120:
                     overview_lines.append(cc)
         # If we found reasonable overview lines, prefer them for features (cap to 5)
         if overview_lines:
