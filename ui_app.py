@@ -1557,15 +1557,58 @@ def main():
                     "images": st.session_state.get("script_template_images", "{title} — 핵심만 30초 요약!\n{features_bullets}\n{price_line}\n{cta}")
                 }
                 all_data = {"env": env, "template": template, "scripts": scripts, "script_templates": script_templates}
-                st.download_button(
+                # Also save to server-side file under ui_outputs with a friendly name
+                try:
+                    url_for_name = st.session_state.get("images_fetch_url", "") or st.session_state.get("url_fetch", "")
+                except Exception:
+                    url_for_name = ""
+                import re as _re
+                fname = f"all_config_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                if url_for_name:
+                    try:
+                        host = urlparse(url_for_name).netloc.lower()
+                    except Exception:
+                        host = ""
+                    m = _re.search(r"/item/(\d+)\.(?:html|htm)", url_for_name)
+                    if m and 'ali' in host:
+                        fname = f"apply_features_ali_{m.group(1)}.json"
+                try:
+                    os.makedirs(OUTPUT_DIR, exist_ok=True)
+                    fs_path = os.path.join(OUTPUT_DIR, fname)
+                    with open(fs_path, "w", encoding="utf-8") as f:
+                        json.dump(all_data, f, ensure_ascii=False, indent=2)
+                    st.caption(f"Saved: {fs_path}")
+                except Exception:
+                    fs_path = None
+                # Offer browser download as well
+                clicked = st.download_button(
                     "Download all_config.json",
                     data=json.dumps(all_data, ensure_ascii=False, indent=2),
-                    file_name="all_config.json",
+                    file_name=fname,
                     mime="application/json",
                 )
+                # Apply to Images fields immediately (title/price/features/script)
+                try:
+                    si = scripts.get("images") or {}
+                    if isinstance(si.get("title"), str) and si.get("title"):
+                        st.session_state["title_images_prefill"] = si.get("title")
+                    if isinstance(si.get("price"), str) and si.get("price"):
+                        st.session_state["price_images_prefill"] = si.get("price")
+                    if isinstance(si.get("features"), list):
+                        st.session_state["features_images_prefill"] = "\n".join([l for l in si.get("features") if isinstance(l, str) and l.strip()])
+                    if isinstance(si.get("script"), str) and si.get("script"):
+                        st.session_state["script_images_prefill"] = si.get("script")
+                    st.session_state["images_prefill_pending"] = True
+                    # immediate apply
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
         with col_all2:
             all_up = st.file_uploader("Load All JSON", type=["json"], key="all_json_upload")
-            if all_up is not None and not st.session_state.get("_all_json_loaded_once"):
+            if all_up is not None:
                 try:
                     js = json.loads(all_up.read().decode("utf-8"))
                     # Env apply via prefill
@@ -1627,10 +1670,9 @@ def main():
                         st.session_state["script_template_images_prefill"] = stpl.get("images")
                         st.session_state["images_prefill_pending"] = True
                     st.success("All settings loaded; applying…")
-                    # Prevent repeat processing and let prefills apply in this same run
+                    # Clear uploader to avoid reprocessing the same file on every rerun
                     try:
                         st.session_state["all_json_upload"] = None
-                        st.session_state["_all_json_loaded_once"] = True
                     except Exception:
                         pass
                 except Exception as e:
@@ -2221,21 +2263,28 @@ def main():
                     # Prefill features: prefer explicit preference > overview lines > specification lines > description lines
                     features_set = False
                     feat_source = None
+                    features_for_save: list[str] = []
                     if overview_pref_lines:
-                        st.session_state["features_images_prefill"] = "\n".join(refine_features(overview_pref_lines))
+                        _feats = refine_features(overview_pref_lines)
+                        st.session_state["features_images_prefill"] = "\n".join(_feats)
                         st.session_state["script_images_prefill"] = "\n".join(overview_pref_lines)
                         features_set = True
                         feat_source = "overview_pref"
+                        features_for_save = _feats
                     elif 'overview_lines' in locals() and overview_lines:
-                        st.session_state["features_images_prefill"] = "\n".join(refine_features(overview_lines))
+                        _feats = refine_features(overview_lines)
+                        st.session_state["features_images_prefill"] = "\n".join(_feats)
                         st.session_state["script_images_prefill"] = "\n".join(overview_lines)
                         features_set = True
                         feat_source = "overview_dom"
+                        features_for_save = _feats
                     elif spec_lines:
-                        st.session_state["features_images_prefill"] = "\n".join(refine_features(spec_lines))
+                        _feats = refine_features(spec_lines)
+                        st.session_state["features_images_prefill"] = "\n".join(_feats)
                         st.session_state["script_images_prefill"] = "\n".join(spec_lines)
                         features_set = True
                         feat_source = "spec"
+                        features_for_save = _feats
                     elif desc_text:
                         try:
                             import re as _re
@@ -2243,7 +2292,9 @@ def main():
                         except Exception:
                             cand = []
                         if cand:
-                            st.session_state["features_images_prefill"] = "\n".join(refine_features(cand))
+                            _feats = refine_features(cand)
+                            st.session_state["features_images_prefill"] = "\n".join(_feats)
+                            features_for_save = _feats
                         st.session_state["script_images_prefill"] = desc_text
                         features_set = True
                         feat_source = "desc"
@@ -2261,6 +2312,7 @@ def main():
                     if t_feats and not spec_lines and not features_set:
                         st.session_state["features_images_prefill"] = "\n".join(t_feats)
                         feat_source = "generic"
+                        features_for_save = refine_features(t_feats)
                     # Fallback: derive from title when still empty
                     if not features_set:
                         title_for_feats = st.session_state.get("title_images") or t_title or (parsed_title if 'parsed_title' in locals() else None)
@@ -2268,13 +2320,102 @@ def main():
                         if ttitle_feats:
                             st.session_state["features_images_prefill"] = "\n".join(ttitle_feats)
                             feat_source = (feat_source or "") + "+title_heuristic"
+                            features_for_save = ttitle_feats
                     # Generate a narration script from template (or fallback)
                     tpl_default = "{title} — 핵심만 30초 요약!\n{features_bullets}\n{price_line}\n{cta}"
                     cur_tpl = st.session_state.get("script_template_images", tpl_default)
-                    scr = render_script_from_template(cur_tpl, t_title or "", t_price_disp or "", refine_features(t_feats or []), st.session_state.get("cta") or "더 알아보기는 링크 클릭!")
+                    # For saving, prefer features_for_save if set; otherwise refine generic
+                    feats_for_script = features_for_save or refine_features(t_feats or [])
+                    scr = render_script_from_template(cur_tpl, t_title or "", t_price_disp or "", feats_for_script, st.session_state.get("cta") or "더 알아보기는 링크 클릭!")
                     if scr:
                         st.session_state["script_images_prefill"] = scr
                         st.session_state["script_last_source_prefill"] = "prefill"
+                    # Auto-save All JSON for this parse
+                    try:
+                        # Build env
+                        env = {
+                            "font_path": st.session_state.get("font_path", ""),
+                            "no_tts": st.session_state.get("no_tts", False),
+                            "voice_rate": st.session_state.get("voice_rate", 185),
+                            "cta": st.session_state.get("cta", "더 알아보기는 링크 클릭!"),
+                            "apply_tpl": st.session_state.get("apply_tpl", True),
+                            "price_convert": st.session_state.get("price_convert", False),
+                            "rate_usd": st.session_state.get("rate_usd", 1350.0),
+                            "rate_eur": st.session_state.get("rate_eur", 1450.0),
+                            "rate_jpy": st.session_state.get("rate_jpy", 9.5),
+                            "rate_cny": st.session_state.get("rate_cny", 190.0),
+                            "duration": st.session_state.get("duration", 24),
+                            "min_slide": st.session_state.get("min_slide", 2.0),
+                            "max_slide": st.session_state.get("max_slide", 5.0),
+                            "tpl_avatar_path": st.session_state.get("tpl_avatar_path"),
+                            "tpl_preview_bg_path": st.session_state.get("tpl_preview_bg_path"),
+                        }
+                        # Template
+                        def _hex_to_rgb_tuple(hx: str):
+                            hx = (hx or "#10997F").lstrip('#')
+                            try:
+                                return [int(hx[0:2],16), int(hx[2:4],16), int(hx[4:6],16)]
+                            except Exception:
+                                return [16,153,127]
+                        template = {
+                            "header": st.session_state.get("tpl_header", ""),
+                            "subheader": st.session_state.get("tpl_subheader", ""),
+                            "footer": st.session_state.get("tpl_footer", ""),
+                            "cta_label": st.session_state.get("tpl_cta", "제품 보기"),
+                            "profile_name": st.session_state.get("tpl_profile", "@channel"),
+                            "theme_color": _hex_to_rgb_tuple(st.session_state.get("tpl_color", "#10997F")),
+                            "bar_height": st.session_state.get("tpl_bar", 90),
+                            "card_height": st.session_state.get("tpl_card", 280),
+                            "pill": {
+                                "x": st.session_state.get("tpl_pill_x", 24),
+                                "y": st.session_state.get("tpl_pill_y", 1700),
+                                "w": st.session_state.get("tpl_pill_w", 200),
+                                "h": st.session_state.get("tpl_pill_h", 64),
+                            },
+                            "profile_x": st.session_state.get("tpl_prof_x", 24),
+                            "profile_offset": st.session_state.get("tpl_prof_off", 18),
+                            "font_sizes": {
+                                "hdr": st.session_state.get("tpl_size_hdr", 40),
+                                "title": st.session_state.get("tpl_size_title", 56),
+                                "mid": st.session_state.get("tpl_size_mid", 54),
+                                "cta": st.session_state.get("tpl_size_cta", 32),
+                                "prof": st.session_state.get("tpl_size_prof", 30),
+                                "foot": st.session_state.get("tpl_size_foot", 28),
+                            },
+                        }
+                        # Scripts
+                        images_script = {
+                            "title": t_title or "",
+                            "price": t_price_disp or "",
+                            "features": feats_for_script,
+                            "cta": st.session_state.get("cta", "더 알아보기는 링크 클릭!"),
+                            "script": scr or "",
+                        }
+                        scripts = {"images": images_script, "pdf": {"title": st.session_state.get("title_pdf", ""), "price": st.session_state.get("price_pdf", ""), "features": [l.strip() for l in (st.session_state.get("features_pdf", "") or "").splitlines() if l.strip()], "cta": st.session_state.get("cta", "더 알아보기는 링크 클릭!"), "script": generate_script_text(st.session_state.get("title_pdf"), st.session_state.get("price_pdf"), [l.strip() for l in (st.session_state.get("features_pdf", "") or "").splitlines() if l.strip()], st.session_state.get("cta") or "더 알아보기는 링크 클릭!")}}
+                        script_templates = {"images": cur_tpl}
+                        all_data = {"env": env, "template": template, "scripts": scripts, "script_templates": script_templates}
+                        # Save to OUTPUT_DIR with friendly name
+                        try:
+                            os.makedirs(OUTPUT_DIR, exist_ok=True)
+                            import re as _re
+                            fname = f"all_config_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                            if url_fetch:
+                                try:
+                                    host = urlparse(url_fetch).netloc.lower()
+                                except Exception:
+                                    host = ""
+                                m = _re.search(r"/item/(\d+)\.(?:html|htm)", url_fetch)
+                                if m and 'ali' in host:
+                                    fname = f"apply_features_ali_{m.group(1)}.json"
+                            fs_path = os.path.join(OUTPUT_DIR, fname)
+                            with open(fs_path, "w", encoding="utf-8") as f:
+                                json.dump(all_data, f, ensure_ascii=False, indent=2)
+                            st.caption(f"Saved config: {fs_path}")
+                            st.session_state["last_saved_all_json_path"] = fs_path
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
                     st.session_state["images_prefill_pending"] = True
                     # Build diagnostics and show
                     diag = {
