@@ -84,6 +84,9 @@ class TemplateConfig:
     badge_title: bool = False
     bottom_caption_bar: bool = False
     bottom_caption_bar_h: int = 140
+    # Manual caption positioning (overlay)
+    caption_x_offset: int = 0
+    caption_y: int = -1
 
 
 def safe_font(font_path: Optional[str] = None, size: int = 60) -> ImageFont.FreeTypeFont:
@@ -204,7 +207,19 @@ def _make_template_overlay(dynamic_caption: Optional[str], tpl: TemplateConfig, 
                 hs.append(h)
                 total_h += h
             total_h += max(0, (len(lines) - 1)) * 8
-            y0 = H - 60 - total_h
+            # Use caption area band if provided
+            area_h = max(120, int(getattr(tpl, "caption_area_h", 250)))
+            area_top = H - area_h
+            y0 = area_top + 10
+            if y0 + total_h > H - 10:
+                y0 = max(area_top + 10, H - 10 - total_h)
+            # Manual Y override
+            try:
+                cy = int(getattr(tpl, "caption_y", -1))
+                if cy >= 0:
+                    y0 = max(0, min(H - 10 - total_h, cy))
+            except Exception:
+                pass
         else:
             # Place text below the card, approx below 1/3 of screen
             y0 = bar_h + card_h + 60
@@ -212,7 +227,11 @@ def _make_template_overlay(dynamic_caption: Optional[str], tpl: TemplateConfig, 
             bbox = draw.textbbox((0, 0), l, font=font_mid)
             tw = bbox[2] - bbox[0]
             th = bbox[3] - bbox[1]
-            draw.text(((W - tw) // 2, y0), l, font=font_mid, fill=(20, 20, 20, 255))
+            try:
+                xoff = int(getattr(tpl, "caption_x_offset", 0))
+            except Exception:
+                xoff = 0
+            draw.text((((W - tw) // 2) + xoff, y0), l, font=font_mid, fill=(20, 20, 20, 255))
             y0 += th + 8
 
     # Bottom gradient for readability
@@ -635,12 +654,16 @@ def main():
     # TTS options
     ap.add_argument("--no_tts", action="store_true", help="TTS 내레이션 비활성화")
     ap.add_argument("--voice_rate", type=int, default=185, help="pyttsx3 말하기 속도(wpm)")
-    ap.add_argument("--tts_backend", choices=["pyttsx3", "edge-tts"], default="pyttsx3",
-                    help="TTS 엔진 선택: 오프라인(py) 또는 Edge-TTS")
-    ap.add_argument("--edge_voice", type=str, default="ko-KR-SunHiNeural",
-                    help="Edge-TTS 음성 이름 (예: ko-KR-SunHiNeural)")
-    ap.add_argument("--edge_rate_pct", type=int, default=0,
-                    help="Edge-TTS 말하기 속도 조정(%)")
+    ap.add_argument("--tts_backend", choices=["pyttsx3", "edge-tts", "elevenlabs", "polly", "google-tts"], default="pyttsx3",
+                    help="TTS 엔진 선택: pyttsx3 / edge-tts / elevenlabs / polly / google-tts")
+    ap.add_argument("--edge_voice", type=str, default="ko-KR-SunHiNeural", help="Edge-TTS 음성 이름")
+    ap.add_argument("--edge_rate_pct", type=int, default=0, help="Edge-TTS 속도(%)")
+    # Additional engines
+    ap.add_argument("--eleven_voice_id", type=str, help="ElevenLabs voice ID")
+    ap.add_argument("--eleven_api_key", type=str, help="ElevenLabs API key (또는 env ELEVEN_API_KEY)")
+    ap.add_argument("--polly_voice", type=str, default="Seoyeon", help="Amazon Polly VoiceId")
+    ap.add_argument("--google_voice", type=str, default="ko-KR-Wavenet-D", help="Google TTS voice name")
+    ap.add_argument("--google_rate", type=float, default=1.0, help="Google TTS speaking rate (0.5~2.0)")
     ap.add_argument("--font_path", type=str, default=None)
     ap.add_argument("--min_slide", type=float, default=2.0)
     ap.add_argument("--max_slide", type=float, default=5.0)
@@ -865,7 +888,8 @@ def main():
         work_dir = "_work_pdf"
         os.makedirs(work_dir, exist_ok=True)
         # Choose extension based on backend
-        tts_ext = ".mp3" if (getattr(args, "tts_backend", "") == "edge-tts") else ".wav"
+        _bk = (getattr(args, "tts_backend", "") or "").lower()
+        tts_ext = ".mp3" if _bk in ("edge-tts", "elevenlabs", "polly", "google-tts") else ".wav"
         narration_path = synthesize_voice(
             script["hook"] + script["core"] + script["closing"],
             os.path.join(work_dir, f"narration{tts_ext}"),
@@ -873,6 +897,11 @@ def main():
             backend=getattr(args, "tts_backend", None),
             edge_voice=getattr(args, "edge_voice", "ko-KR-SunHiNeural"),
             edge_rate_pct=int(getattr(args, "edge_rate_pct", 0)),
+            polly_voice=getattr(args, "polly_voice", "Seoyeon"),
+            google_voice=getattr(args, "google_voice", "ko-KR-Wavenet-D"),
+            google_rate=float(getattr(args, "google_rate", 1.0)),
+            eleven_voice_id=getattr(args, "eleven_voice_id", None),
+            eleven_api_key=getattr(args, "eleven_api_key", None),
         )
 
     final = video

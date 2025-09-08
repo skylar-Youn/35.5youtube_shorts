@@ -90,6 +90,8 @@ def _save_ui_prefs():
         # Template small prefs to persist across reloads
         "tpl_caption_pos",
         "tpl_caption_area",
+        "tpl_caption_x",
+        "tpl_caption_y",
         # Apply template toggle
         "apply_tpl",
         # TTS prefs
@@ -1366,6 +1368,8 @@ def build_template_json_if_applied(apply_tpl: bool) -> str | None:
         ],
         "caption_pos": st.session_state.get("tpl_caption_pos", "mid"),
         "caption_area_h": st.session_state.get("tpl_caption_area", 250),
+        "caption_x": st.session_state.get("tpl_caption_x", 0),
+        "caption_y": st.session_state.get("tpl_caption_y", -1),
         "bar_height": st.session_state.get("tpl_bar", 90),
         "card_height": st.session_state.get("tpl_card", 280),
         "pill": {
@@ -1402,7 +1406,7 @@ def make_template_preview_image(caption: str | None = None, bg_path: str | None 
     - If bg_path is None, draws a simple dark gradient background.
     """
     try:
-        from shorts_maker2 import TemplateConfig, _make_template_overlay, W as VID_W, H as VID_H
+        from shorts_maker2 import TemplateConfig, _make_template_overlay, W as VID_W, H as VID_H, safe_font
     except Exception:
         # Fallback sizes if import fails
         from PIL import Image
@@ -1442,6 +1446,8 @@ def make_template_preview_image(caption: str | None = None, bg_path: str | None 
         badge_title=bool(st.session_state.get("tpl_badge_title", False)),
         bottom_caption_bar=bool(st.session_state.get("tpl_bottom_caption_bar", False)),
         bottom_caption_bar_h=int(st.session_state.get("tpl_bottom_caption_h", 140)),
+        caption_x_offset=int(st.session_state.get("tpl_caption_x", 0)),
+        caption_y=int(st.session_state.get("tpl_caption_y", -1)),
     )
 
     # Background
@@ -1615,12 +1621,76 @@ def main():
         max_slide = st.slider("Max slide (s)", 2.0, 8.0, st.session_state.get("max_slide", 5.0), 0.5, key="max_slide")
         font_path = st.text_input("Font path (optional)", value=st.session_state.get("font_path", ""), key="font_path")
         no_tts = st.checkbox("Disable TTS", value=st.session_state.get("no_tts", False), key="no_tts", on_change=_save_ui_prefs)
-        tts_engine = st.selectbox("TTS Engine", ["pyttsx3", "edge-tts"], index=(0 if st.session_state.get("tts_engine", "pyttsx3") == "pyttsx3" else 1), key="tts_engine", on_change=_save_ui_prefs)
+        tts_engine = st.selectbox("TTS Engine", ["pyttsx3", "edge-tts", "elevenlabs", "polly", "google-tts"], index=(
+            ["pyttsx3", "edge-tts", "elevenlabs", "polly", "google-tts"].index(st.session_state.get("tts_engine", "pyttsx3"))
+            if st.session_state.get("tts_engine", "pyttsx3") in ["pyttsx3", "edge-tts", "elevenlabs", "polly", "google-tts"] else 0
+        ), key="tts_engine", on_change=_save_ui_prefs)
         voice_rate = st.number_input("Voice rate", min_value=120, max_value=240, value=st.session_state.get("voice_rate", 185), step=5, key="voice_rate", on_change=_save_ui_prefs)
         if tts_engine == "edge-tts":
             st.caption("Edge-TTS options")
             st.text_input("Edge voice", value=st.session_state.get("edge_voice", "ko-KR-SunHiNeural"), key="edge_voice", on_change=_save_ui_prefs)
             st.slider("Edge rate (%)", -50, 50, value=st.session_state.get("edge_rate_pct", 0), step=1, key="edge_rate_pct", on_change=_save_ui_prefs)
+        elif tts_engine == "elevenlabs":
+            st.caption("ElevenLabs options (API key는 저장하지 않습니다)")
+            st.text_input("Voice ID", value=st.session_state.get("eleven_voice_id", ""), key="eleven_voice_id", on_change=_save_ui_prefs)
+            st.text_input("API Key", value=st.session_state.get("eleven_api_key", ""), key="eleven_api_key", type="password")
+        elif tts_engine == "polly":
+            st.caption("Amazon Polly options")
+            st.text_input("VoiceId", value=st.session_state.get("polly_voice", "Seoyeon"), key="polly_voice", on_change=_save_ui_prefs)
+        elif tts_engine == "google-tts":
+            st.caption("Google Cloud TTS options")
+            st.text_input("Voice name", value=st.session_state.get("google_voice", "ko-KR-Wavenet-D"), key="google_voice", on_change=_save_ui_prefs)
+            st.number_input("Speaking rate", 0.5, 2.0, value=st.session_state.get("google_rate", 1.0), step=0.05, key="google_rate", on_change=_save_ui_prefs)
+        with st.expander("TTS Test (quick)"):
+            test_text = st.text_input("Test text", value=st.session_state.get("tts_test_text", "안녕하세요. 테스트 중입니다."), key="tts_test_text")
+            col_t1, col_t2, col_t3 = st.columns(3)
+            def _do_tts(rate_adj: int | None = None):
+                try:
+                    from shorts_maker2 import synthesize_voice as _synth
+                except Exception as e:
+                    st.error(f"TTS synth import failed: {e}")
+                    return
+                os.makedirs(OUTPUT_DIR, exist_ok=True)
+                engine = st.session_state.get("tts_engine", "pyttsx3")
+                if engine == "edge-tts":
+                    rate_pct = int(st.session_state.get("edge_rate_pct", 0))
+                    if rate_adj is not None:  # slow/fast preset
+                        rate_pct = rate_adj
+                    outp = os.path.join(OUTPUT_DIR, f"tts_test_edge_{rate_pct:+d}.mp3")
+                    p = _synth([test_text], outp, rate=st.session_state.get("voice_rate", 185), backend="edge-tts", edge_voice=st.session_state.get("edge_voice", "ko-KR-SunHiNeural"), edge_rate_pct=rate_pct)
+                elif engine == "elevenlabs":
+                    # Use env var for key to avoid printing in logs
+                    if st.session_state.get("eleven_api_key"):
+                        os.environ["ELEVEN_API_KEY"] = st.session_state.get("eleven_api_key")
+                    vid = st.session_state.get("eleven_voice_id") or "21m00Tcm4TlvDq8ikWAM"
+                    outp = os.path.join(OUTPUT_DIR, f"tts_test_eleven.mp3")
+                    p = _synth([test_text], outp, backend="elevenlabs", eleven_voice_id=vid, eleven_api_key=os.environ.get("ELEVEN_API_KEY"))
+                elif engine == "polly":
+                    outp = os.path.join(OUTPUT_DIR, f"tts_test_polly.mp3")
+                    p = _synth([test_text], outp, backend="polly", polly_voice=st.session_state.get("polly_voice", "Seoyeon"))
+                elif engine == "google-tts":
+                    outp = os.path.join(OUTPUT_DIR, f"tts_test_google.mp3")
+                    p = _synth([test_text], outp, backend="google-tts", google_voice=st.session_state.get("google_voice", "ko-KR-Wavenet-D"), google_rate=float(st.session_state.get("google_rate", 1.0)))
+                else:
+                    rate = int(st.session_state.get("voice_rate", 185))
+                    if rate_adj is not None:
+                        rate = max(120, min(240, rate_adj))
+                    outp = os.path.join(OUTPUT_DIR, f"tts_test_pyttsx3_{rate}.wav")
+                    p = _synth([test_text], outp, rate=rate, backend="pyttsx3")
+                if p and os.path.exists(p):
+                    st.success(f"Saved: {p}")
+                    st.audio(p)
+                else:
+                    st.error("TTS synth failed (check engine/libs)")
+            with col_t1:
+                if st.button("Slow"):
+                    _do_tts(rate_adj=(-20 if tts_engine == "edge-tts" else 140))
+            with col_t2:
+                if st.button("Normal"):
+                    _do_tts(rate_adj=(0 if tts_engine == "edge-tts" else 185))
+            with col_t3:
+                if st.button("Fast"):
+                    _do_tts(rate_adj=(+20 if tts_engine == "edge-tts" else 220))
         cta = st.text_input("CTA", value=st.session_state.get("cta", "더 알아보기는 링크 클릭!"), key="cta")
         music_file = st.file_uploader("Background music (mp3/wav)", type=["mp3", "wav"], key="music")
         apply_tpl = st.checkbox(
@@ -1740,6 +1810,8 @@ def main():
                     "theme_color": _hex_to_rgb_tuple(st.session_state.get("tpl_color", "#10997F")),
                     "caption_pos": st.session_state.get("tpl_caption_pos", "mid"),
                     "caption_area_h": st.session_state.get("tpl_caption_area", 250),
+                    "caption_x": st.session_state.get("tpl_caption_x", 0),
+                    "caption_y": st.session_state.get("tpl_caption_y", -1),
                     "bar_height": st.session_state.get("tpl_bar", 90),
                     "card_height": st.session_state.get("tpl_card", 280),
                     "pill": {
@@ -1862,6 +1934,12 @@ def main():
                         st.session_state["tpl_profile_prefill"] = tp.get("profile_name", "@channel")
                         if isinstance(tp.get("caption_pos"), str):
                             st.session_state["tpl_caption_pos_prefill"] = tp.get("caption_pos")
+                        if isinstance(tp.get("caption_area_h"), (int, float)):
+                            st.session_state["tpl_caption_area_prefill"] = int(tp.get("caption_area_h"))
+                        if isinstance(tp.get("caption_x"), (int, float)):
+                            st.session_state["tpl_caption_x_prefill"] = int(tp.get("caption_x"))
+                        if isinstance(tp.get("caption_y"), (int, float)):
+                            st.session_state["tpl_caption_y_prefill"] = int(tp.get("caption_y"))
                         if isinstance(tp.get("caption_area_h"), (int, float)):
                             st.session_state["tpl_caption_area_prefill"] = int(tp.get("caption_area_h"))
                         col = tp.get("theme_color") or [16,153,127]
@@ -2924,6 +3002,18 @@ def main():
                         if st.session_state.get("tts_engine") == "edge-tts":
                             cmd += ["--edge_voice", st.session_state.get("edge_voice", "ko-KR-SunHiNeural")]
                             cmd += ["--edge_rate_pct", str(int(st.session_state.get("edge_rate_pct", 0)))]
+                        elif st.session_state.get("tts_engine") == "elevenlabs":
+                            vid = st.session_state.get("eleven_voice_id")
+                            if vid:
+                                cmd += ["--eleven_voice_id", vid]
+                            # Set API key in env to avoid printing in logs
+                            if st.session_state.get("eleven_api_key"):
+                                os.environ["ELEVEN_API_KEY"] = st.session_state.get("eleven_api_key")
+                        elif st.session_state.get("tts_engine") == "polly":
+                            cmd += ["--polly_voice", st.session_state.get("polly_voice", "Seoyeon")]
+                        elif st.session_state.get("tts_engine") == "google-tts":
+                            cmd += ["--google_voice", st.session_state.get("google_voice", "ko-KR-Wavenet-D")]
+                            cmd += ["--google_rate", str(float(st.session_state.get("google_rate", 1.0)))]
                         if font_path:
                             cmd += ["--font_path", font_path]
                         if cta:
@@ -3509,6 +3599,10 @@ def main():
                 st.session_state["tpl_caption_pos"] = st.session_state.pop("tpl_caption_pos_prefill")
             if "tpl_caption_area_prefill" in st.session_state:
                 st.session_state["tpl_caption_area"] = st.session_state.pop("tpl_caption_area_prefill")
+            if "tpl_caption_x_prefill" in st.session_state:
+                st.session_state["tpl_caption_x"] = st.session_state.pop("tpl_caption_x_prefill")
+            if "tpl_caption_y_prefill" in st.session_state:
+                st.session_state["tpl_caption_y"] = st.session_state.pop("tpl_caption_y_prefill")
             st.session_state["tpl_prefill_pending"] = False
         col_t1, col_t2 = st.columns(2)
         with col_t1:
@@ -3561,6 +3655,20 @@ def main():
                 120, 600,
                 value=st.session_state.get("tpl_caption_area", 250),
                 key="tpl_caption_area",
+                on_change=_save_ui_prefs,
+            )
+            cap_x = st.number_input(
+                "Caption X offset (px)",
+                -600, 600,
+                value=st.session_state.get("tpl_caption_x", 0),
+                key="tpl_caption_x",
+                on_change=_save_ui_prefs,
+            )
+            cap_y = st.number_input(
+                "Caption Y absolute (px, -1=auto)",
+                -1, 1800,
+                value=st.session_state.get("tpl_caption_y", -1),
+                key="tpl_caption_y",
                 on_change=_save_ui_prefs,
             )
 
