@@ -72,6 +72,8 @@ def _save_ui_prefs():
         "images_fetch_count",
         "images_fetch_timeout",
         "images_prefill_limit",
+        # Thumbnails
+        "images_thumbs_hq",
         # Selection behavior
         "images_use_selected_only",
         # Site choice
@@ -766,6 +768,71 @@ def parse_images_from_html(html: str, base_url: str, max_items: int = 8):
     return title, out
 
 
+def parse_aliexpress_thumbnails_from_html(html: str) -> list[str]:
+    """Extract AliExpress thumbnail URLs (summImagePathList) from inline DCData JSON if present.
+
+    Returns a list of absolute URLs (as-is from the page). These are typically small (e.g., _80x80).
+    """
+    import re as _re
+    thumbs: list[str] = []
+    try:
+        m = _re.search(r"DCData\s*=\s*(\{.*?\});", html, _re.S)
+        if m:
+            js = m.group(1)
+            try:
+                data = json.loads(js)
+                lst = data.get("summImagePathList") or []
+                if isinstance(lst, list):
+                    for u in lst:
+                        if isinstance(u, str) and u.startswith(("http://", "https://")):
+                            thumbs.append(u)
+            except Exception:
+                pass
+        if not thumbs:
+            # Fallback: parse list literal
+            m2 = _re.search(r'"summImagePathList"\s*:\s*\[(.*?)\]', html, _re.S)
+            if m2:
+                seg = m2.group(1)
+                for mu in _re.finditer(r'"(https?://[^"]+)"', seg):
+                    thumbs.append(mu.group(1))
+    except Exception:
+        pass
+    # Deduplicate while preserving order
+    seen = set()
+    out: list[str] = []
+    for u in thumbs:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def upgrade_aliexpress_image_url(u: str) -> str:
+    """Attempt to convert AliExpress small/thumbnail URLs to higher-res originals.
+
+    Heuristics:
+    - Remove size suffixes like _80x80, _160x160, etc.
+    - Collapse patterns like .jpg_80x80.jpg -> .jpg, .png_80x80.png -> .png
+    - Convert .webp or .jpg_.webp -> .jpg
+    """
+    try:
+        import re as _re
+        s = u
+        # Common WEBP → JPG cleanup
+        s = s.replace('.jpg_.webp', '.jpg').replace('.png_.webp', '.png').replace('.webp', '.jpg')
+        # Collapse duplicated extension patterns with size in between
+        s = _re.sub(r"(\.jpe?g)_\d+x\d+\.jpe?g", r"\1", s)
+        s = _re.sub(r"(\.png)_\d+x\d+\.png", r"\1", s)
+        # Remove trailing _WxH before extension
+        s = _re.sub(r"_\d+x\d+(?=\.jpe?g\b)", "", s)
+        s = _re.sub(r"_\d+x\d+(?=\.png\b)", "", s)
+        # Remove quality suffixes like _Q90
+        s = _re.sub(r"_Q\d+", "", s)
+        return s
+    except Exception:
+        return u
+
+
 def parse_product_text_from_html(html: str):
     """Parse title, price, features from generic product-like HTML.
 
@@ -961,6 +1028,14 @@ def download_images(urls, subdir="images_fetch"):
         except Exception:
             continue
     return paths
+
+
+def download_thumbnails(urls, subdir="images_thumbs"):
+    """Download small thumbnail images to a separate folder.
+
+    Same behavior as download_images but keeps files under a different subdir for clarity.
+    """
+    return download_images(urls, subdir=subdir)
 
 
 def generate_script_text(title: str | None, price: str | None, features: list[str] | None, cta: str | None) -> str:
@@ -1512,6 +1587,7 @@ def main():
 
         # Show/manage fetched images with selection checkboxes
         fetched = st.session_state.get("images_fetched_paths") or []
+        thumbs = st.session_state.get("images_thumbs_paths") or []
         if fetched:
             st.caption(f"Fetched images ready: {len(fetched)} files")
             # Selection state dict: path -> bool
@@ -1673,10 +1749,88 @@ def main():
                         st.session_state.pop("images_fetched_paths", None)
                         st.session_state.pop("images_sel_state", None)
                         st.session_state.pop("images_selected_paths", None)
+                        st.session_state.pop("images_thumbs_paths", None)
+                        st.session_state.pop("images_thumbs_sel_state", None)
                         try:
                             st.rerun()
                         except Exception:
                             pass
+
+        # Show thumbnails (if any)
+        if thumbs:
+            st.markdown("---")
+            st.caption(f"Downloaded thumbnails: {len(thumbs)} files")
+
+            # Selection state dict: path -> bool
+            t_sel_state = st.session_state.get("images_thumbs_sel_state") or {}
+            for p in thumbs:
+                if p not in t_sel_state:
+                    t_sel_state[p] = True
+            st.session_state["images_thumbs_sel_state"] = t_sel_state
+
+            # Controls for thumbnails
+            col_t1, col_t2, col_t3, col_t4 = st.columns([1,1,1,1])
+            with col_t1:
+                if st.button("Select all thumbs"):
+                    for p in list(t_sel_state.keys()):
+                        t_sel_state[p] = True
+                    st.session_state["images_thumbs_sel_state"] = t_sel_state
+            with col_t2:
+                if st.button("Clear selection (thumbs)"):
+                    for p in list(t_sel_state.keys()):
+                        t_sel_state[p] = False
+                    st.session_state["images_thumbs_sel_state"] = t_sel_state
+            with col_t3:
+                if st.button("Remove selected thumbs"):
+                    kept = []
+                    for p in thumbs:
+                        if t_sel_state.get(p, False):
+                            try:
+                                if os.path.exists(p):
+                                    os.remove(p)
+                            except Exception:
+                                pass
+                        else:
+                            kept.append(p)
+                    st.session_state["images_thumbs_paths"] = kept
+                    # Purge removed keys
+                    for p in list(t_sel_state.keys()):
+                        if p not in kept:
+                            t_sel_state.pop(p, None)
+                    st.session_state["images_thumbs_sel_state"] = t_sel_state
+                    try:
+                        st.rerun()
+                    except Exception:
+                        pass
+            with col_t4:
+                if st.button("Clear all thumbs"):
+                    try:
+                        for p in thumbs:
+                            try:
+                                if os.path.exists(p):
+                                    os.remove(p)
+                            except Exception:
+                                pass
+                    finally:
+                        st.session_state.pop("images_thumbs_paths", None)
+                        st.session_state.pop("images_thumbs_sel_state", None)
+                        try:
+                            st.rerun()
+                        except Exception:
+                            pass
+
+            # Render thumbnails grid with checkboxes
+            cols_t = st.columns(6)
+            for i, p in enumerate(thumbs):
+                try:
+                    with cols_t[i % 6]:
+                        st.image(p, caption=f"thumb_{i+1}", width=120)
+                        h = hashlib.md5(("thumb::" + p).encode("utf-8")).hexdigest()[:10]
+                        checked = st.checkbox("select", value=t_sel_state.get(p, True), key=f"thumb_sel_{h}")
+                        t_sel_state[p] = checked
+                except Exception:
+                    continue
+            st.session_state["images_thumbs_sel_state"] = t_sel_state
 
         # Template editing moved to Template tab
         st.caption("Edit template in the Template tab. Current values will be applied.")
@@ -1709,6 +1863,7 @@ def main():
             pw_mobile = st.checkbox("Mobile", value=bool(st.session_state.get("images_fetch_pw_mobile", True)), key="images_fetch_pw_mobile", on_change=_save_ui_prefs)
             pw_wait = st.selectbox("Wait state", ["networkidle", "domcontentloaded", "load"], index=["networkidle","domcontentloaded","load"].index(st.session_state.get("images_fetch_pw_wait", "networkidle")), key="images_fetch_pw_wait", on_change=_save_ui_prefs)
             deep_scrolls = st.slider("Scroll passes", 3, 16, int(st.session_state.get("images_fetch_deep_scrolls", 8)), 1, key="images_fetch_deep_scrolls", on_change=_save_ui_prefs)
+            thumbs_hq = st.checkbox("Hi-res thumbnails", value=bool(st.session_state.get("images_thumbs_hq", True)), key="images_thumbs_hq", on_change=_save_ui_prefs)
 
         # Optional: Use Selenium-based AliExpress fetcher (56.*) when site is AliExpress
         use_ali56 = False
@@ -1794,6 +1949,22 @@ def main():
                                 spec_lines = None
                         except Exception as e:
                             st.warning(f"Detail-only fetch failed: {e}")
+                    # Thumbnails (AliExpress only) — try to extract and download
+                    if site_sel == "aliexpress" and html:
+                        try:
+                            thumb_urls = parse_aliexpress_thumbnails_from_html(html)
+                        except Exception:
+                            thumb_urls = []
+                        if thumb_urls:
+                            if st.session_state.get("images_thumbs_hq", True):
+                                try:
+                                    thumb_urls = [upgrade_aliexpress_image_url(u) for u in thumb_urls]
+                                except Exception:
+                                    pass
+                            dthumbs = download_thumbnails(thumb_urls)
+                            if dthumbs:
+                                curt = st.session_state.get("images_thumbs_paths") or []
+                                st.session_state["images_thumbs_paths"] = curt + dthumbs
                     if site_sel == "aliexpress" and use_ali56:
                         try:
                             base_dir = os.path.join(UPLOAD_DIR, "aliexpress_downloads")
@@ -2066,14 +2237,47 @@ def main():
                     if not deep_fetch and not st.session_state.get("images_fetch_detail_only"):
                         img_urls = img_urls[: int(fetch_count)]
                     dpaths = download_images(img_urls)
+                    # Thumbnails (AliExpress only) — parse and download alongside
+                    if site_sel == "aliexpress" and html:
+                        try:
+                            thumb_urls = parse_aliexpress_thumbnails_from_html(html)
+                        except Exception:
+                            thumb_urls = []
+                        if thumb_urls:
+                            if st.session_state.get("images_thumbs_hq", True):
+                                try:
+                                    thumb_urls = [upgrade_aliexpress_image_url(u) for u in thumb_urls]
+                                except Exception:
+                                    pass
+                            dthumbs = download_thumbnails(thumb_urls)
+                            if dthumbs:
+                                cur_t = st.session_state.get("images_thumbs_paths") or []
+                                st.session_state["images_thumbs_paths"] = cur_t + dthumbs
                     # Also add to fetched list for later review/editing
                     if dpaths:
                         cur = st.session_state.get("images_fetched_paths") or []
                         st.session_state["images_fetched_paths"] = cur + dpaths
-                    # Resolve images to run: respect selection when enabled
+                    # Resolve images to run: include thumbnails and prioritize selected thumbs
                     use_selected_only = st.session_state.get("images_use_selected_only", True)
                     selected_paths = st.session_state.get("images_selected_paths") or []
-                    paths_to_run = selected_paths if (use_selected_only and selected_paths) else dpaths
+                    thumbs_all = st.session_state.get("images_thumbs_paths") or []
+                    thumbs_sel_state = st.session_state.get("images_thumbs_sel_state") or {}
+                    selected_thumbs = [p for p in thumbs_all if thumbs_sel_state.get(p, True)]
+                    # Build prioritized list
+                    if use_selected_only:
+                        base_list = selected_paths
+                        rest_thumbs = []  # only selected thumbs when in selected-only mode
+                    else:
+                        base_list = dpaths
+                        rest_thumbs = [p for p in thumbs_all if p not in selected_thumbs]
+                    ordered = selected_thumbs + base_list + rest_thumbs
+                    # Deduplicate while preserving order
+                    paths_to_run = []
+                    seen = set()
+                    for p in ordered:
+                        if p and (p not in seen):
+                            seen.add(p)
+                            paths_to_run.append(p)
                     if len(paths_to_run) < 2:
                         st.error("Need at least 2 images to run. Select more or fetch again.")
                     else:
