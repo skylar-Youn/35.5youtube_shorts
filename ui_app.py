@@ -48,6 +48,13 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 PREFS_PATH = os.path.join(OUTPUT_DIR, "ui_prefs.json")
 
 
+def _set_diag(key: str, data: dict):
+    try:
+        st.session_state[key] = data
+    except Exception:
+        pass
+
+
 def _load_ui_prefs() -> dict:
     try:
         if os.path.exists(PREFS_PATH):
@@ -997,6 +1004,12 @@ def detect_site(url: str) -> str:
 
 def refine_features(features):
     out = []
+    # If any Hangul lines exist, prefer them and drop non-Hangul lines
+    try:
+        import re as _re
+        has_ko = any(_re.search(r"[가-힣]", (f or "")) for f in (features or []))
+    except Exception:
+        has_ko = False
     for f in features or []:
         f = " ".join(f.split())  # normalize spaces
         try:
@@ -1004,6 +1017,15 @@ def refine_features(features):
             f = _re.sub(r"^[\s\-•\*·–—]+", "", f)
             # Skip obvious spec label lines like "사양:", "이름:", "소재:" etc.
             if _re.match(r"^[A-Za-z가-힣]{1,10}\s*[:：]", f):
+                continue
+            # Drop AliExpress generic marketing tagline
+            if _re.search(r"smarter\s+shopping.*aliexpress", f, _re.I):
+                continue
+            # Drop non-KO lines when KO exists
+            if has_ko and not _re.search(r"[가-힣]", f):
+                continue
+            # Drop brand/policy generic lines that are not product features
+            if _re.search(r"브랜드|친애하는|안심하고\s*구매|품질이\s*보장|관세|세금|환불|교환", f):
                 continue
         except Exception:
             pass
@@ -1014,6 +1036,41 @@ def refine_features(features):
         if len(out) >= 5:
             break
     return out
+
+
+def features_from_title_heuristic(title: str | None) -> list[str]:
+    if not title:
+        return []
+    s = title.lower()
+    feats: list[str] = []
+    def add(x):
+        if x not in feats and 6 <= len(x) <= 120:
+            feats.append(x)
+    if any(k in s for k in ["알루미늄", "aluminum", "aluminium"]):
+        add("알루미늄 프레임")
+    if "usb" in s:
+        add("USB 포트 지원")
+    if any(k in s for k in ["컵", "cup"]):
+        add("컵 홀더 제공")
+    if any(k in s for k in ["전화", "phone"]):
+        add("전화 홀더 제공")
+    if any(k in s for k in ["탑승", "기내용", "cabin"]):
+        add("기내용 캐빈 사이즈")
+    # inch options
+    import re as _re
+    m20 = _re.search(r"\b20\b", s)
+    m24 = _re.search(r"\b24\b", s)
+    if m20 and m24:
+        add("20/24인치 옵션")
+    elif m20:
+        add("20인치 옵션")
+    elif m24:
+        add("24인치 옵션")
+    if any(k in s for k in ["롤링", "rolling", "바퀴", "wheeled"]):
+        add("부드러운 롤링 바퀴")
+    if any(k in s for k in ["가방", "수하물", "캐리어", "luggage", "bag"]):
+        add("여행용 캐리어")
+    return feats[:5]
 
 
 def convert_price_to_krw(price: str, usd: float = 1350.0, eur: float = 1450.0, jpy: float = 9.5, cny: float = 190.0):
@@ -1927,10 +1984,12 @@ def main():
                     html = fetch_html_requests(url_fetch, timeout=int(fetch_timeout))
                 except Exception as e:
                     html = None
+                    st.session_state["diag_last_error"] = f"requests fetch failed: {type(e).__name__}: {e}"
                     if use_playwright:
                         try:
                             html = fetch_html_playwright(url_fetch, timeout=int(fetch_timeout), use_stealth=pw_stealth, mobile=pw_mobile, wait_state=pw_wait)
                         except Exception as e2:
+                            st.session_state["diag_last_error"] = f"playwright fetch failed: {type(e2).__name__}: {e2}"
                             st.error(f"Fetch failed: {e2}")
                     else:
                         st.error(f"Fetch failed: {e}")
@@ -2161,18 +2220,22 @@ def main():
                         st.session_state["images_fetched_paths"] = cur + dpaths
                     # Prefill features: prefer explicit preference > overview lines > specification lines > description lines
                     features_set = False
+                    feat_source = None
                     if overview_pref_lines:
                         st.session_state["features_images_prefill"] = "\n".join(refine_features(overview_pref_lines))
                         st.session_state["script_images_prefill"] = "\n".join(overview_pref_lines)
                         features_set = True
+                        feat_source = "overview_pref"
                     elif 'overview_lines' in locals() and overview_lines:
                         st.session_state["features_images_prefill"] = "\n".join(refine_features(overview_lines))
                         st.session_state["script_images_prefill"] = "\n".join(overview_lines)
                         features_set = True
+                        feat_source = "overview_dom"
                     elif spec_lines:
                         st.session_state["features_images_prefill"] = "\n".join(refine_features(spec_lines))
                         st.session_state["script_images_prefill"] = "\n".join(spec_lines)
                         features_set = True
+                        feat_source = "spec"
                     elif desc_text:
                         try:
                             import re as _re
@@ -2183,6 +2246,7 @@ def main():
                             st.session_state["features_images_prefill"] = "\n".join(refine_features(cand))
                         st.session_state["script_images_prefill"] = desc_text
                         features_set = True
+                        feat_source = "desc"
                     # Optional KRW conversion for display/script
                     if price_convert and t_price:
                         t_price_disp = convert_price_to_krw(t_price, usd=usd_rate, eur=eur_rate, jpy=jpy_rate, cny=cny_rate)
@@ -2196,6 +2260,14 @@ def main():
                     # If specification lines exist, keep them; otherwise fallback to generic t_feats
                     if t_feats and not spec_lines and not features_set:
                         st.session_state["features_images_prefill"] = "\n".join(t_feats)
+                        feat_source = "generic"
+                    # Fallback: derive from title when still empty
+                    if not features_set:
+                        title_for_feats = st.session_state.get("title_images") or t_title or (parsed_title if 'parsed_title' in locals() else None)
+                        ttitle_feats = features_from_title_heuristic(title_for_feats)
+                        if ttitle_feats:
+                            st.session_state["features_images_prefill"] = "\n".join(ttitle_feats)
+                            feat_source = (feat_source or "") + "+title_heuristic"
                     # Generate a narration script from template (or fallback)
                     tpl_default = "{title} — 핵심만 30초 요약!\n{features_bullets}\n{price_line}\n{cta}"
                     cur_tpl = st.session_state.get("script_template_images", tpl_default)
@@ -2204,6 +2276,23 @@ def main():
                         st.session_state["script_images_prefill"] = scr
                         st.session_state["script_last_source_prefill"] = "prefill"
                     st.session_state["images_prefill_pending"] = True
+                    # Build diagnostics and show
+                    diag = {
+                        "site": site_sel,
+                        "use_playwright": bool(use_playwright),
+                        "detail_only": bool(detail_only),
+                        "deep_fetch": bool(deep_fetch),
+                        "prefer_overview": bool(st.session_state.get("images_prefer_overview", True)),
+                        "overview_pref_lines": len(overview_pref_lines or []) if 'overview_pref_lines' in locals() else 0,
+                        "overview_lines": len(overview_lines or []) if 'overview_lines' in locals() else 0,
+                        "spec_lines": len(spec_lines or []) if spec_lines else 0,
+                        "desc_present": bool(desc_text),
+                        "images_downloaded": len(dpaths or []),
+                        "thumbs_downloaded": len(st.session_state.get("images_thumbs_paths") or []),
+                        "feature_source": feat_source,
+                        "error": st.session_state.get("diag_last_error"),
+                    }
+                    _set_diag("diag_prefill", diag)
                     st.success(f"Parsed content; downloaded {len(dpaths)} images; updating fields & script…")
                     try:
                         st.rerun()
@@ -2219,10 +2308,12 @@ def main():
                 try:
                     html = fetch_html_requests(url_fetch, timeout=int(fetch_timeout))
                 except Exception as e:
+                    st.session_state["diag_last_error"] = f"requests fetch failed: {type(e).__name__}: {e}"
                     if use_playwright:
                         try:
                             html = fetch_html_playwright(url_fetch, timeout=int(fetch_timeout), use_stealth=pw_stealth, mobile=pw_mobile, wait_state=pw_wait)
                         except Exception as e2:
+                            st.session_state["diag_last_error"] = f"playwright fetch failed: {type(e2).__name__}: {e2}"
                             st.error(f"Fetch failed: {e2}")
                     else:
                         st.error(f"Fetch failed: {e}")
@@ -2253,6 +2344,7 @@ def main():
                             except Exception:
                                 pass
                     except Exception as e:
+                        st.session_state["diag_last_error"] = f"detail-only failed: {type(e).__name__}: {e}"
                         st.warning(f"Detail-only fetch failed, falling back: {e}")
                         parsed_title, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(fetch_count))
                         tt_title, tt_price, tt_feats = parse_product_text_from_html(html)
@@ -2267,6 +2359,7 @@ def main():
                             scrolls=int(deep_scrolls),
                         )
                     except Exception as e:
+                        st.session_state["diag_last_error"] = f"deep fetch failed: {type(e).__name__}: {e}"
                         st.warning(f"Deep fetch failed, falling back: {e}")
                         parsed_title, img_urls = parse_images_from_html(html, base_url=url_fetch, max_items=int(fetch_count))
                     tt_title, tt_price, tt_feats = parse_product_text_from_html(html)
@@ -2369,10 +2462,27 @@ def main():
                         st.error("Need at least 2 images to run. Select more or fetch again.")
                     else:
                         # Update UI features when overview is preferred and available (no rerun to avoid interrupting run)
-                        if site_sel == "aliexpress" and overview_pref_lines:
-                            st.session_state["features_images_prefill"] = "\n".join(refine_features(overview_pref_lines))
-                            st.session_state["images_prefill_pending"] = True
+                        if site_sel == "aliexpress":
+                            lines_for_feat = overview_pref_lines or []
+                            if not lines_for_feat:
+                                # Try title heuristic if overview absent
+                                title_for_feats = title2 or parsed_title or ""
+                                lines_for_feat = features_from_title_heuristic(title_for_feats)
+                            if lines_for_feat:
+                                st.session_state["features_images_prefill"] = "\n".join(refine_features(lines_for_feat))
+                                st.session_state["images_prefill_pending"] = True
                         # 4) Build and run shorts_maker2.py
+                        _set_diag("diag_run", {
+                            "site": site_sel,
+                            "use_playwright": bool(use_playwright),
+                            "detail_only": bool(st.session_state.get("images_fetch_detail_only")),
+                            "deep_fetch": bool(deep_fetch),
+                            "images_to_run": len(paths_to_run),
+                            "selected_thumbs": len(selected_thumbs),
+                            "selected_images": len(selected_paths),
+                            "all_thumbs": len(thumbs_all),
+                            "error": st.session_state.get("diag_last_error"),
+                        })
                         cmd = [
                             os.path.basename(os.sys.executable),
                             "shorts_maker2.py",
@@ -2538,6 +2648,19 @@ def main():
                         st.error(err)
                     else:
                         st.warning("AI 호출 실패 또는 OPENAI_API_KEY 미설정. 사이드바 텍스트를 이용해 직접 생성 버튼을 사용하세요.")
+
+        # Diagnostics panel
+        with st.expander("Diagnostics (last actions)"):
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.caption("Prefill")
+                st.json(st.session_state.get("diag_prefill") or {})
+            with col_d2:
+                st.caption("Run")
+                st.json(st.session_state.get("diag_run") or {})
+            err = st.session_state.get("diag_last_error")
+            if err:
+                st.warning(f"Last error: {err}")
 
         with st.expander("대본 템플릿 (편집/저장/불러오기)"):
             tpl_default = "{title} — 핵심만 30초 요약!\n{features_bullets}\n{price_line}\n{cta}"

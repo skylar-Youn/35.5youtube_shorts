@@ -115,6 +115,9 @@ def parse(html: str) -> AliParsed:
         elif isinstance(imgs, str):
             images.append(imgs)
         desc = prod.get("description") or ""
+        # Skip AliExpress generic OG description
+        if isinstance(desc, str) and "Smarter Shopping" in desc and "Aliexpress" in desc:
+            desc = ""
         for c in re.split(r"[•\n\.\|]+", desc):
             c = c.strip()
             if 6 <= len(c) <= 120:
