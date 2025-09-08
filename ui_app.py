@@ -102,6 +102,16 @@ def _save_ui_prefs():
         "edge_rate_pct",
         # Last selected preset (auto-apply)
         "last_preset_name",
+        # Global env prefs
+        "duration","min_slide","max_slide","font_path","price_convert",
+        "rate_usd","rate_eur","rate_jpy","rate_cny","cta",
+        # Template core values (text/colors/geom/sizes)
+        "tpl_header","tpl_subheader","tpl_footer","tpl_cta","tpl_profile","tpl_color",
+        "tpl_bar","tpl_card","tpl_pill_x","tpl_pill_y","tpl_pill_w","tpl_pill_h",
+        "tpl_prof_x","tpl_prof_off",
+        "tpl_size_hdr","tpl_size_title","tpl_size_mid","tpl_size_cta","tpl_size_prof","tpl_size_foot",
+        # Template style flags
+        "tpl_badge_title","tpl_bottom_caption_bar","tpl_bottom_caption_h",
     ]
     data = {}
     for k in keys:
@@ -1409,8 +1419,29 @@ def make_template_preview_image(caption: str | None = None, bg_path: str | None 
         from shorts_maker2 import TemplateConfig, _make_template_overlay, W as VID_W, H as VID_H, safe_font
     except Exception:
         # Fallback sizes if import fails
-        from PIL import Image
+        from PIL import Image, ImageFont
         VID_W, VID_H = 1080, 1920
+        
+        # Define fallback safe_font function
+        def safe_font(font_path=None, size=60):
+            from PIL import ImageFont
+            import os
+            paths = []
+            if font_path and os.path.exists(font_path):
+                paths.append(font_path)
+            paths += [
+                "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+                "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "C:\\Windows\\Fonts\\malgun.ttf",
+            ]
+            for pth in paths:
+                try:
+                    return ImageFont.truetype(pth, size=size)
+                except Exception:
+                    continue
+            return ImageFont.load_default()
+        
         im = Image.new("RGB", (VID_W, VID_H), (18, 18, 18))
         return im
 
@@ -1699,6 +1730,9 @@ def main():
             key="apply_tpl",
             on_change=_save_ui_prefs,
         )
+        if st.button("Save Settings (default)"):
+            _save_ui_prefs()
+            st.success(f"Saved to {PREFS_PATH}")
         st.markdown("---")
         st.caption("Price conversion to KRW (approx)")
         price_convert = st.checkbox("Convert price to KRW", value=st.session_state.get("price_convert", False), key="price_convert")

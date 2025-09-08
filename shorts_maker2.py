@@ -37,6 +37,21 @@ try:
     HAS_EDGE_TTS = True
 except Exception:
     HAS_EDGE_TTS = False
+try:
+    import boto3  # Amazon Polly
+    HAS_BOTO3 = True
+except Exception:
+    HAS_BOTO3 = False
+try:
+    from google.cloud import texttospeech as google_tts  # type: ignore
+    HAS_GOOGLE_TTS = True
+except Exception:
+    HAS_GOOGLE_TTS = False
+try:
+    import requests as _rq
+    HAS_REQUESTS = True
+except Exception:
+    HAS_REQUESTS = False
 
 W, H = 1080, 1920  # 9:16
 
@@ -191,49 +206,6 @@ def _make_template_overlay(dynamic_caption: Optional[str], tpl: TemplateConfig, 
                 y += (bbox[3] - bbox[1]) + 6
             draw.line([60, bar_h + card_h - 10, W - 60, bar_h + card_h - 10], fill=(60, 60, 60, 255), width=2)
 
-    # Dynamic caption
-    if dynamic_caption:
-        font_mid = safe_font(font_path, size=max(18, int(tpl.mid_size)))
-        maxw = W - 140
-        lines = _wrap_lines(draw, dynamic_caption, font_mid, maxw, max_lines=3)
-        # Position: bottom or mid
-        if getattr(tpl, "caption_pos", "mid") == "bottom":
-            # total text height
-            total_h = 0
-            hs = []
-            for l in lines:
-                bb = draw.textbbox((0, 0), l, font=font_mid)
-                h = bb[3] - bb[1]
-                hs.append(h)
-                total_h += h
-            total_h += max(0, (len(lines) - 1)) * 8
-            # Use caption area band if provided
-            area_h = max(120, int(getattr(tpl, "caption_area_h", 250)))
-            area_top = H - area_h
-            y0 = area_top + 10
-            if y0 + total_h > H - 10:
-                y0 = max(area_top + 10, H - 10 - total_h)
-            # Manual Y override
-            try:
-                cy = int(getattr(tpl, "caption_y", -1))
-                if cy >= 0:
-                    y0 = max(0, min(H - 10 - total_h, cy))
-            except Exception:
-                pass
-        else:
-            # Place text below the card, approx below 1/3 of screen
-            y0 = bar_h + card_h + 60
-        for l in lines:
-            bbox = draw.textbbox((0, 0), l, font=font_mid)
-            tw = bbox[2] - bbox[0]
-            th = bbox[3] - bbox[1]
-            try:
-                xoff = int(getattr(tpl, "caption_x_offset", 0))
-            except Exception:
-                xoff = 0
-            draw.text((((W - tw) // 2) + xoff, y0), l, font=font_mid, fill=(20, 20, 20, 255))
-            y0 += th + 8
-
     # Bottom gradient for readability
     grad_h = 360
     for i in range(grad_h):
@@ -247,6 +219,41 @@ def _make_template_overlay(dynamic_caption: Optional[str], tpl: TemplateConfig, 
         y0 = H - area_h - 20
         y1 = y0 + bar_hh
         draw.rounded_rectangle([24, y0, W-24, y1], radius=20, fill=(255,255,255,245))
+
+    # Dynamic caption (draw after bottom bar so text is visible)
+    if dynamic_caption:
+        font_mid = safe_font(font_path, size=max(18, int(tpl.mid_size)))
+        maxw = W - 140
+        lines = _wrap_lines(draw, dynamic_caption, font_mid, maxw, max_lines=3)
+        if getattr(tpl, "caption_pos", "mid") == "bottom":
+            total_h = 0
+            for l in lines:
+                bb = draw.textbbox((0, 0), l, font=font_mid)
+                total_h += (bb[3] - bb[1])
+            total_h += max(0, (len(lines) - 1)) * 8
+            area_h = max(120, int(getattr(tpl, "caption_area_h", 250)))
+            area_top = H - area_h
+            y0 = area_top + 10
+            if y0 + total_h > H - 10:
+                y0 = max(area_top + 10, H - 10 - total_h)
+            try:
+                cy = int(getattr(tpl, "caption_y", -1))
+                if cy >= 0:
+                    y0 = max(0, min(H - 10 - total_h, cy))
+            except Exception:
+                pass
+        else:
+            y0 = bar_h + card_h + 60
+        try:
+            xoff = int(getattr(tpl, "caption_x_offset", 0))
+        except Exception:
+            xoff = 0
+        for l in lines:
+            bb = draw.textbbox((0, 0), l, font=font_mid)
+            tw = bb[2] - bb[0]
+            th = bb[3] - bb[1]
+            draw.text((((W - tw) // 2) + xoff, y0), l, font=font_mid, fill=(20, 20, 20, 255))
+            y0 += th + 8
 
     # CTA pill (bottom-left)
     pill_h = max(40, int(tpl.pill_h))
@@ -382,13 +389,15 @@ def synthesize_voice(
     backend: Optional[str] = None,
     edge_voice: str = "ko-KR-SunHiNeural",
     edge_rate_pct: int = 0,
+    polly_voice: str = "Seoyeon",
+    google_voice: str = "ko-KR-Wavenet-D",
+    google_rate: float = 1.0,
+    eleven_voice_id: Optional[str] = None,
+    eleven_api_key: Optional[str] = None,
 ) -> Optional[str]:
-    """Synthesize TTS audio to out_path.
+    """Synthesize TTS audio to out_path using various backends.
 
-    - backend: "pyttsx3" or "edge-tts". If None, choose available with preference order: edge-tts, pyttsx3.
-    - rate: words per minute (pyttsx3 only)
-    - edge_voice: e.g., "ko-KR-SunHiNeural"
-    - edge_rate_pct: integer percent adjustment, e.g., -20..+50
+    backends: pyttsx3 (offline), edge-tts, elevenlabs, polly, google-tts
     """
     text = " ".join(lines or [])
     choice = (backend or "").strip().lower() if backend else None
@@ -435,13 +444,69 @@ def synthesize_voice(
         except Exception:
             return None
 
+    def _polly_say() -> Optional[str]:
+        if not HAS_BOTO3:
+            return None
+        try:
+            polly = boto3.client("polly")
+            resp = polly.synthesize_speech(Text=text, OutputFormat="mp3", VoiceId=polly_voice)
+            stream = resp.get("AudioStream")
+            if stream:
+                with open(out_path, "wb") as f:
+                    f.write(stream.read())
+                return out_path
+        except Exception:
+            return None
+        return None
+
+    def _google_say() -> Optional[str]:
+        if not HAS_GOOGLE_TTS:
+            return None
+        try:
+            client = google_tts.TextToSpeechClient()
+            input_text = google_tts.SynthesisInput(text=text)
+            voice = google_tts.VoiceSelectionParams(language_code="ko-KR", name=google_voice)
+            cfg = google_tts.AudioConfig(audio_encoding=google_tts.AudioEncoding.MP3, speaking_rate=float(google_rate))
+            resp = client.synthesize_speech(input=input_text, voice=voice, audio_config=cfg)
+            with open(out_path, "wb") as f:
+                f.write(resp.audio_content)
+            return out_path
+        except Exception:
+            return None
+
+    def _eleven_say() -> Optional[str]:
+        if not HAS_REQUESTS:
+            return None
+        api_key = (eleven_api_key or os.environ.get("ELEVEN_API_KEY") or "").strip()
+        vid = (eleven_voice_id or os.environ.get("ELEVEN_VOICE_ID") or "").strip() or "21m00Tcm4TlvDq8ikWAM"
+        if not api_key:
+            return None
+        try:
+            url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}"
+            headers = {"xi-api-key": api_key, "accept": "audio/mpeg", "content-type": "application/json"}
+            payload = {"text": text, "voice_settings": {"stability": 0.5, "similarity_boost": 0.7}}
+            r = _rq.post(url, headers=headers, json=payload, timeout=60)
+            if r.status_code == 200:
+                with open(out_path, "wb") as f:
+                    f.write(r.content)
+                return out_path
+        except Exception:
+            return None
+        return None
+
     # Choose backend
     if choice == "edge-tts":
         return _edge_tts_say() or _pyttsx3_say()
     if choice == "pyttsx3":
         return _pyttsx3_say() or _edge_tts_say()
-    # Auto: prefer edge-tts for quality when available
-    return _edge_tts_say() or _pyttsx3_say()
+    if choice == "elevenlabs":
+        return _eleven_say() or _pyttsx3_say()
+    if choice == "polly":
+        return _polly_say() or _pyttsx3_say()
+    if choice == "google-tts":
+        return _google_say() or _pyttsx3_say()
+    # Auto preference: edge > eleven > google > polly > pyttsx3
+    return _edge_tts_say() or _eleven_say() or _google_say() or _polly_say() or _pyttsx3_say()
 
 
 def build_timeline(images: List[str], script: Dict[str, List[str]], duration: int, font_path: Optional[str],
