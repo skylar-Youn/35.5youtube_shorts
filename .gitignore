@@ -33,3 +33,8 @@ Archive/*
 assets/*
 editor/node_modules/
 projects/
+editor/.next/
+editor/.env.local
+editor/
+editor/*
+
