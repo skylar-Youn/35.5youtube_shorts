@@ -8,9 +8,11 @@
     "dev:web": "npm --prefix editor run dev",
     "build:web": "npm --prefix editor run build",
     "start:web": "npm --prefix editor run start",
-    "postinstall": "npm --prefix editor install || true"
+    "postinstall": "npm --prefix editor install || true",
+    "test:e2e": "playwright test tests/e2e.aliexpress.spec.ts"
   },
   "devDependencies": {
-    "concurrently": "8.2.2"
+    "concurrently": "8.2.2",
+    "@playwright/test": "1.45.2"
   }
 }

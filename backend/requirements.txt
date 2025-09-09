@@ -15,3 +15,5 @@ python-dotenv
 requests
 playwright
 playwright-stealth
+pyttsx3
+edge-tts

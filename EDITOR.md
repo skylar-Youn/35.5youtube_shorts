@@ -28,12 +28,17 @@ Key API Endpoints
 - `POST /scroll/capture { url }` → fetch image URLs with Playwright
 - `POST /projects/{id}/ingest_urls { urls }` → download images into project assets
 - `POST /render { project_id }` → render MP4 via moviepy
+- `POST /render/start { project_id }` → background render (use `/render/sse/{jobId}` for progress)
+- `GET /render/status/{jobId}` / `GET /render/sse/{jobId}` → render progress (JSON/SSE)
+- `GET /projects/{id}/srt/export` / `POST /projects/{id}/srt/import` → SRT IO
 
 Editing Capabilities (current)
-- Add/Delete image/text clips on timeline; set durations (inline for now) and store per-project JSON.
+- Drag/resize timeline clips with zoom + snapping; delete via Del, fine adjust via arrows.
 - Upload assets or fetch images via URL auto-scroll (Python Playwright).
 - Edit script (title/price/features/CTA) for later use in templates or TTS.
-- Render basic 9:16 video with image layers and text overlays; audio layers if clips provided.
+- Clip properties panel: start/duration/x/y/scale/opacity and text props.
+- Template overlay (top bar/CTA/bottom caption) applied during render; basic TTS from Script.
+- Render basic 9:16 video with image layers and text overlays; audio layers if clips provided; background render with SSE.
 
 Planned Enhancements
 - Proper draggable/resizable timeline clips with snapping and keyboard shortcuts.

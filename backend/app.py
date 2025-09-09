@@ -6,13 +6,15 @@ from typing import Dict
 
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse, Response
+from fastapi.responses import JSONResponse, HTMLResponse, Response, StreamingResponse, FileResponse
 from fastapi import HTTPException
 
 from .models import CreateProjectReq, Project, Track, Clip, RenderReq, ScrollCaptureReq
 from .storage import project_dir, save_project, load_project, list_projects
 from .scroll_capture import deep_image_fetch, download_images, sanitize_filename
 from .render import render_project
+from .tasks import start_render, get_job
+from .srt import to_srt, parse_srt
 
 
 app = FastAPI(title="Editor Backend", default_response_class=JSONResponse)
@@ -133,6 +135,17 @@ async def api_upload_asset(pid: str, file: UploadFile = File(...)):
     return {"assetId": asset_id, "path": path}
 
 
+@app.get("/projects/{pid}/assets/{aid}", include_in_schema=False)
+def api_get_asset_file(pid: str, aid: str):
+    prj = load_project(pid)
+    if not prj:
+        raise HTTPException(404, "Project not found")
+    path = prj.assets.get(aid)
+    if not path or not os.path.exists(path):
+        raise HTTPException(404, "Asset not found")
+    return FileResponse(path, filename=os.path.basename(path))
+
+
 @app.post("/scroll/capture")
 def api_scroll_capture(req: ScrollCaptureReq):
     title, urls = deep_image_fetch(req.url, mobile=req.mobile, use_stealth=req.use_stealth)
@@ -168,6 +181,88 @@ def api_render(req: RenderReq):
 
     path = render_project(prj, out_path, progress_cb=_cb)
     return {"ok": True, "path": path, "progress": prog["val"]}
+
+
+@app.post("/render/start")
+def api_render_start(req: RenderReq):
+    prj = load_project(req.project_id)
+    if not prj:
+        raise HTTPException(404, "Project not found")
+    out_dir = os.path.join(project_dir(prj.id), "renders")
+    name = req.out_name or f"render_{int(time.time())}.mp4"
+    out_path = os.path.join(out_dir, name)
+
+    def _job(progress_cb):
+        return render_project(prj, out_path, progress_cb=progress_cb)
+
+    job_id = start_render(_job)
+    return {"jobId": job_id}
+
+
+@app.get("/render/status/{job_id}")
+def api_render_status(job_id: str):
+    st = get_job(job_id)
+    if not st:
+        raise HTTPException(404, "job not found")
+    return st
+
+
+@app.get("/render/sse/{job_id}")
+def api_render_sse(job_id: str):
+    import json
+    def gen():
+        last = None
+        while True:
+            st = get_job(job_id)
+            if not st:
+                yield "event: error\n" + "data: {\"error\":\"not found\"}\n\n"
+                break
+            if st.get("status") in ("done", "error"):
+                yield "event: message\n" + "data: " + json.dumps(st) + "\n\n"
+                break
+            prog = st.get("progress")
+            if prog != last:
+                last = prog
+                yield "event: progress\n" + "data: " + json.dumps({"progress": prog}) + "\n\n"
+            time.sleep(0.3)
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/projects/{pid}/srt/export")
+def api_srt_export(pid: str):
+    prj = load_project(pid)
+    if not prj:
+        raise HTTPException(404, "Project not found")
+    # gather text clips
+    segs = []
+    for t in prj.tracks:
+        if t.kind == "text":
+            for c in sorted(t.clips, key=lambda x: x.start):
+                segs.append((float(c.start), float(c.start + c.duration), str(c.text or "")))
+    srt_text = to_srt(segs)
+    return Response(content=srt_text, media_type="text/plain")
+
+
+@app.post("/projects/{pid}/srt/import")
+def api_srt_import(pid: str, body: Dict):
+    prj = load_project(pid)
+    if not prj:
+        raise HTTPException(404, "Project not found")
+    srt_text = (body.get("srt") or "").strip()
+    if not srt_text:
+        raise HTTPException(400, "missing srt text")
+    segs = parse_srt(srt_text)
+    # replace text track
+    text_track = next((t for t in prj.tracks if t.kind == "text"), None)
+    if not text_track:
+        text_track = Track(id="t1", kind="text", clips=[])
+        prj.tracks.append(text_track)
+    clips = []
+    for i, (st, et, txt) in enumerate(segs):
+        clips.append(Clip(id=f"txt{i:03}", type="text", start=float(st), duration=float(max(0.1, et - st)), transform={"x": 0.5, "y": 0.85, "scale": 1.0, "opacity": 1.0, "rotation": 0.0}, text=txt, text_size=48, text_color="#ffffff", text_align="center"))
+    text_track.clips = clips
+    save_project(prj)
+    return prj.model_dump()
 
 
 if __name__ == "__main__":

@@ -5,7 +5,8 @@ import TopBar from "../components/TopBar";
 import AssetPanel from "../components/AssetPanel";
 import Timeline from "../components/Timeline";
 import Preview from "../components/Preview";
-import Properties from "../components/Properties";
+import ClipProperties from "../components/ClipProperties";
+import TemplatePanel from "../components/TemplatePanel";
 import ScriptEditor from "../components/ScriptEditor";
 
 export default function Page() {
@@ -58,8 +59,9 @@ export default function Page() {
           <Preview />
           <Timeline />
         </div>
-        <div style={{ display: "grid", gridTemplateRows: "1fr 1fr", gap: 8 }}>
-          <Properties />
+        <div style={{ display: "grid", gridTemplateRows: "auto 1fr 1fr", gap: 8 }}>
+          <TemplatePanel />
+          <ClipProperties />
           <ScriptEditor />
         </div>
       </div>
