@@ -14,29 +14,43 @@ export default function Page() {
   const [projects, setProjects] = useState<any[]>([]);
 
   useEffect(() => {
-    loadProjectList(backend).then(setProjects);
+    loadProjectList(backend).then(setProjects).catch((e) => console.error(e));
   }, [backend, loadProjectList]);
 
   const handleNewProject = async () => {
     const name = prompt("새 프로젝트 이름", "My Project");
     if (!name) return;
-    const p = await createProject(backend, name);
-    setProject(p);
-    const list = await loadProjectList(backend);
-    setProjects(list);
+    try {
+      const p = await createProject(backend, name);
+      setProject(p);
+      const list = await loadProjectList(backend);
+      setProjects(list);
+    } catch (err) {
+      alert("프로젝트 생성 실패. 서버가 실행 중인지 확인하세요.");
+    }
   };
 
   return (
     <div style={{ display: "grid", gridTemplateRows: "48px 1fr", height: "100vh" }}>
       <TopBar onNew={handleNewProject} projects={projects} onSelect={async (id) => {
-        const res = await fetch(`${backend}/projects/${id}`);
-        const data = await res.json();
-        setProject(data);
+        try {
+          const res = await fetch(`${backend}/projects/${id}`);
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          setProject(data);
+        } catch {
+          alert("프로젝트 불러오기 실패. 서버 상태를 확인하세요.");
+        }
       }} onRender={async () => {
-        if (!project?.id) return;
-        const res = await fetch(`${backend}/render`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: project.id }) });
-        const data = await res.json();
-        alert(data?.path ? `렌더 완료: ${data.path}` : "렌더 실패");
+        try {
+          if (!project?.id) return;
+          const res = await fetch(`${backend}/render`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: project.id }) });
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          alert(data?.path ? `렌더 완료: ${data.path}` : "렌더 실패");
+        } catch {
+          alert("렌더 실패. 서버 로그를 확인하세요.");
+        }
       }} />
       <div style={{ display: "grid", gridTemplateColumns: "280px 1fr 320px", gap: 8, padding: 8 }}>
         <AssetPanel />
@@ -52,4 +66,3 @@ export default function Page() {
     </div>
   );
 }
-

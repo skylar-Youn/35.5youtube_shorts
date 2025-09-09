@@ -18,21 +18,37 @@ const useStore = create<Store>((set, get) => ({
   project: undefined,
   setProject: (p) => set({ project: p }),
   updateProject: async (backend, p) => {
-    const res = await fetch(`${backend}/projects/${p.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) });
-    const data = await res.json();
-    set({ project: data });
+    try {
+      const res = await fetch(`${backend}/projects/${p.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      set({ project: data });
+    } catch (err) {
+      console.error("updateProject failed", err);
+    }
   },
   createProject: async (backend, name) => {
-    const res = await fetch(`${backend}/projects`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
-    const data = await res.json();
-    return data;
+    try {
+      const res = await fetch(`${backend}/projects`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return data;
+    } catch (err) {
+      console.error("createProject failed", err);
+      return Promise.reject(err);
+    }
   },
   loadProjectList: async (backend) => {
-    const res = await fetch(`${backend}/projects`);
-    const data = await res.json();
-    return data?.projects || [];
+    try {
+      const res = await fetch(`${backend}/projects`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return data?.projects || [];
+    } catch (err) {
+      console.error("loadProjectList failed", err);
+      return [];
+    }
   },
 }));
 
 export default useStore;
-

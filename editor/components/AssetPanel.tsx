@@ -9,26 +9,35 @@ export default function AssetPanel() {
 
   const upload = async (file: File) => {
     if (!project?.id) return;
-    const fd = new FormData();
-    fd.append("file", file);
-    const res = await fetch(`${backend}/projects/${project.id}/assets/upload`, { method: "POST", body: fd });
-    const data = await res.json();
-    const res2 = await fetch(`${backend}/projects/${project.id}`);
-    setProject(await res2.json());
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${backend}/projects/${project.id}/assets/upload`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error();
+      const res2 = await fetch(`${backend}/projects/${project.id}`);
+      setProject(await res2.json());
+    } catch {
+      alert("업로드 실패. 서버 상태를 확인하세요.");
+    }
   };
 
   const handleCaptureFromUrl = async () => {
     const url = prompt("이미지 가져올 URL", "");
     if (!url || !project?.id) return;
-    const res = await fetch(`${backend}/scroll/capture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
-    const data = await res.json();
-    if (data?.urls?.length) {
-      await fetch(`${backend}/projects/${project.id}/ingest_urls`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ urls: data.urls }) });
-      const res2 = await fetch(`${backend}/projects/${project.id}`);
-      setProject(await res2.json());
-      alert(`가져온 이미지: ${data.urls.length}개`);
-    } else {
-      alert("이미지를 찾지 못했습니다.");
+    try {
+      const res = await fetch(`${backend}/scroll/capture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      if (data?.urls?.length) {
+        await fetch(`${backend}/projects/${project.id}/ingest_urls`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ urls: data.urls }) });
+        const res2 = await fetch(`${backend}/projects/${project.id}`);
+        setProject(await res2.json());
+        alert(`가져온 이미지: ${data.urls.length}개`);
+      } else {
+        alert("이미지를 찾지 못했습니다.");
+      }
+    } catch {
+      alert("URL 캡처 실패. 서버와 Playwright 설정을 확인하세요.");
     }
   };
 
@@ -59,4 +68,3 @@ const btn: React.CSSProperties = {
   padding: "6px 10px",
   cursor: "pointer"
 };
-

@@ -37,4 +37,5 @@ editor/.next/
 editor/.env.local
 editor/
 editor/*
+node_modules/*
 
