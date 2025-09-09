@@ -1,0 +1,17 @@
+{
+  "name": "capcut-style-editor",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "concurrently -k -p '[{name}]' -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "python -m backend.app",
+    "dev:web": "npm --prefix editor run dev",
+    "build:web": "npm --prefix editor run build",
+    "start:web": "npm --prefix editor run start",
+    "postinstall": "npm --prefix editor install || true"
+  },
+  "devDependencies": {
+    "concurrently": "8.2.2"
+  }
+}
+

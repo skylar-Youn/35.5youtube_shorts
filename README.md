@@ -341,3 +341,13 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 source /home/sk/ws/SD/paddleOCR2/35.5youtube_shorts/.venv/bin/activate
 source .venv/bin/activate
 python -m streamlit run ui_app.py
+
+## CapCut 스타일 편집기 (Python + Next.js)
+
+새로운 편집기 백엔드/프론트 구조를 추가했습니다. 자세한 사용법은 `EDITOR.md`를 참고하세요.
+
+요약 실행:
+- 최초 1회 준비: `pip install -r backend/requirements.txt && python -m playwright install chromium`
+- 통합 실행(루트): `npm install && cp editor/.env.local.example editor/.env.local && npm run dev`
+  - 서버: http://localhost:8000
+  - 프론트: http://localhost:3000

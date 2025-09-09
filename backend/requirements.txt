@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
+itsdangerous
+orjson
+
+# For CORS
+starlette
+
+# Reuse existing stack
+Pillow
+moviepy
+python-dotenv
+requests
+playwright
+playwright-stealth
