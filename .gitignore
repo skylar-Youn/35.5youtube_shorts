@@ -33,3 +33,5 @@ Archive/*
 assets/*
 
 editor/*
+node_modules/*
+projects/*
